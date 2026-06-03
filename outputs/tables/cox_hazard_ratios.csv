@@ -1,0 +1,43 @@
+component,covariate,covariate_label,HR,HR_lower,HR_upper,coef,se,z,p,sig
+Conductor,lightning_flash_density,Lightning Flash Density,0.9016,0.7929,1.0253,-0.1036,0.0656,-1.58,0.11422068639816568,ns
+Conductor,avg_wind_speed_ms,Avg Wind Speed (m/s),1.0083,0.8912,1.1408,0.0083,0.063,0.132,0.8953568539521739,ns
+Conductor,avg_humidity_pct,Avg Humidity (%),1.0785,0.9495,1.2251,0.0756,0.065,1.163,0.24502296183527794,ns
+Conductor,pm25_annual_avg,PM2.5 Annual Avg,0.9161,0.8035,1.0445,-0.0876,0.0669,-1.309,0.19057580361706597,ns
+Conductor,HI_score_last,Health Index Score,1.6459,1.4489,1.8697,0.4983,0.0651,7.659,1.8677311869156145e-14,***
+Conductor,voltage_kv,Voltage (kV),0.9504,0.8366,1.0797,-0.0509,0.0651,-0.782,0.43432266903324546,ns
+Conductor,encroachment_severity_enc,Encroachment Severity,0.9548,0.8409,1.084,-0.0463,0.0648,-0.715,0.47490144149110547,ns
+Damper,lightning_flash_density,Lightning Flash Density,0.9874,0.8902,1.0952,-0.0126,0.0529,-0.239,0.8110388939513307,ns
+Damper,avg_wind_speed_ms,Avg Wind Speed (m/s),0.9746,0.884,1.0744,-0.0258,0.0498,-0.518,0.6046247557673906,ns
+Damper,avg_humidity_pct,Avg Humidity (%),0.9613,0.867,1.0658,-0.0395,0.0527,-0.75,0.45332239714195544,ns
+Damper,pm25_annual_avg,PM2.5 Annual Avg,1.0286,0.9285,1.1393,0.0282,0.0522,0.539,0.5895738850490858,ns
+Damper,HI_score_last,Health Index Score,1.9141,1.6545,2.2145,0.6493,0.0744,8.73,2.556640502326686e-18,***
+Damper,voltage_kv,Voltage (kV),1.0095,0.9157,1.113,0.0095,0.0498,0.191,0.8487875250037579,ns
+Damper,encroachment_severity_enc,Encroachment Severity,0.9803,0.889,1.0809,-0.0199,0.0499,-0.399,0.6899037305502077,ns
+Spacer,lightning_flash_density,Lightning Flash Density,1.0134,0.9097,1.1289,0.0133,0.0551,0.241,0.8093377723104029,ns
+Spacer,avg_wind_speed_ms,Avg Wind Speed (m/s),1.0236,0.9235,1.1344,0.0233,0.0525,0.444,0.6571370969017141,ns
+Spacer,avg_humidity_pct,Avg Humidity (%),1.0008,0.8985,1.1147,0.0008,0.055,0.014,0.988654303988131,ns
+Spacer,pm25_annual_avg,PM2.5 Annual Avg,1.022,0.9178,1.138,0.0217,0.0549,0.396,0.6918455799935965,ns
+Spacer,HI_score_last,Health Index Score,1.8356,1.6133,2.0885,0.6073,0.0659,9.222,2.91553479681783e-20,***
+Spacer,voltage_kv,Voltage (kV),0.9884,0.8906,1.0969,-0.0117,0.0532,-0.22,0.825955896606205,ns
+Spacer,encroachment_severity_enc,Encroachment Severity,0.9738,0.8782,1.0798,-0.0266,0.0527,-0.504,0.6143517974273804,ns
+Insulator,lightning_flash_density,Lightning Flash Density,1.0175,0.9272,1.1166,0.0174,0.0474,0.366,0.714315688193917,ns
+Insulator,avg_wind_speed_ms,Avg Wind Speed (m/s),1.0413,0.9576,1.1323,0.0405,0.0428,0.946,0.3440471190145894,ns
+Insulator,avg_humidity_pct,Avg Humidity (%),1.1872,1.0819,1.3027,0.1716,0.0474,3.621,0.00029317548042385024,***
+Insulator,pm25_annual_avg,PM2.5 Annual Avg,1.2836,1.1725,1.4052,0.2497,0.0462,5.404,6.502806667353391e-08,***
+Insulator,HI_score_last,Health Index Score,2.0732,1.7722,2.4253,0.7291,0.08,9.11,8.208536942623998e-20,***
+Insulator,voltage_kv,Voltage (kV),0.9962,0.9144,1.0854,-0.0038,0.0437,-0.086,0.931475814256117,ns
+Insulator,encroachment_severity_enc,Encroachment Severity,0.9562,0.8782,1.0413,-0.0447,0.0435,-1.029,0.3033450281843717,ns
+Fittings,lightning_flash_density,Lightning Flash Density,0.9083,0.8017,1.029,-0.0962,0.0637,-1.511,0.13081391232543257,ns
+Fittings,avg_wind_speed_ms,Avg Wind Speed (m/s),1.0242,0.9088,1.1543,0.0239,0.061,0.392,0.6949202623025109,ns
+Fittings,avg_humidity_pct,Avg Humidity (%),1.0864,0.9598,1.2297,0.0829,0.0632,1.311,0.18970150976676015,ns
+Fittings,pm25_annual_avg,PM2.5 Annual Avg,0.9172,0.8068,1.0425,-0.0865,0.0654,-1.323,0.18591850530640416,ns
+Fittings,HI_score_last,Health Index Score,1.6645,1.4669,1.8887,0.5095,0.0645,7.902,2.749869614566886e-15,***
+Fittings,voltage_kv,Voltage (kV),0.9925,0.8781,1.1218,-0.0075,0.0625,-0.12,0.9043073177484346,ns
+Fittings,encroachment_severity_enc,Encroachment Severity,1.0311,0.9134,1.1639,0.0306,0.0618,0.495,0.6203896208076352,ns
+Arrester,lightning_flash_density,Lightning Flash Density,1.2209,1.1204,1.3305,0.1996,0.0439,4.552,5.3258083393166215e-06,***
+Arrester,avg_wind_speed_ms,Avg Wind Speed (m/s),0.9645,0.8907,1.0443,-0.0362,0.0406,-0.891,0.37289920285115463,ns
+Arrester,avg_humidity_pct,Avg Humidity (%),0.9395,0.8619,1.024,-0.0625,0.044,-1.421,0.1553352963316663,ns
+Arrester,pm25_annual_avg,PM2.5 Annual Avg,1.0013,0.9213,1.0882,0.0013,0.0425,0.03,0.9760959832162753,ns
+Arrester,HI_score_last,Health Index Score,2.2179,1.8563,2.6498,0.7965,0.0908,8.774,1.7292983316166137e-18,***
+Arrester,voltage_kv,Voltage (kV),0.9513,0.8787,1.0298,-0.05,0.0405,-1.234,0.21712329888526163,ns
+Arrester,encroachment_severity_enc,Encroachment Severity,0.9868,0.9131,1.0664,-0.0133,0.0396,-0.336,0.7368072847406271,ns

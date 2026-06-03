@@ -1,0 +1,7 @@
+component,contamination_flashover,corrosion,end_of_life,lightning_damage,mechanical_fatigue,overload,physical_damage,wind_damage,Total
+Arrester,0,0,124,233,0,139,0,0,496
+Conductor,0,35,15,0,14,0,18,0,82
+Damper,0,80,64,0,63,0,0,49,256
+Fittings,0,58,22,0,23,0,0,0,103
+Insulator,113,0,85,136,68,0,0,0,402
+Spacer,0,0,72,0,76,0,60,0,208

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "Bash(python3 -c ' *)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c \"import lifelines; print\\('lifelines version:', lifelines.__version__\\)\")",
+      "Bash(python3 -c \"import docx; print\\('python-docx', docx.__version__\\)\")",
+      "Read(//System/Library/Fonts/Supplemental/**)",
+      "Read(//Library/Fonts/**)",
+      "Bash(python3 src/generate_report_docx.py)",
+      "Bash(gh auth *)",
+      "Bash(git init *)",
+      "Bash(git branch *)",
+      "Bash(git add *)",
+      "Bash(git -c user.name=pimnicha.sir -c user.email=pimnicha.data07@gmail.com commit -q -m ' *)"
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+# Section 1: Concordance Index Comparison
+component,Cox_C,AFT_C,delta_C,better_model
+Conductor,0.9096,0.9209,0.0113,AFT
+Damper,0.7505,0.7539,0.0034,AFT
+Spacer,0.7954,0.8019,0.0065,AFT
+Insulator,0.7346,0.7388,0.0042,AFT
+Fittings,0.8852,0.8981,0.0129,AFT
+Arrester,0.6943,0.702,0.0077,AFT
+
+# Section 2: Covariate Significance Comparison
+component,covariate_label,Cox_C,AFT_C,Delta_C,Cox_HR,Cox_p,Cox_sig,AFT_AF,AFT_p,AFT_sig,agreement,direction_consistent,note,Cox_HR_lower,Cox_HR_upper,AFT_AF_lower,AFT_AF_upper
+Arrester,Health Index Score,0.6943,0.702,0.0077,2.2179,1.7292983316166137e-18,***,0.4414,0.0,***,Both,True,Significant in both; direction consistent,1.8563,2.6498,0.376,0.5182
+Arrester,Lightning Flash Density,0.6943,0.702,0.0077,1.2209,5.3258083393166215e-06,***,0.8917,0.0001,***,Both,True,Significant in both; direction consistent,1.1204,1.3305,0.8428,0.9436
+Arrester,Avg Humidity (%),0.6943,0.702,0.0077,0.9395,0.1553352963316663,ns,1.0299,0.3042,ns,Neither,True,No significant effect in either model,0.8619,1.024,0.9736,1.0893
+Arrester,Voltage (kV),0.6943,0.702,0.0077,0.9513,0.21712329888526163,ns,1.0331,0.2044,ns,Neither,True,No significant effect in either model,0.8787,1.0298,0.9824,1.0863
+Arrester,Avg Wind Speed (m/s),0.6943,0.702,0.0077,0.9645,0.37289920285115463,ns,1.0182,0.4814,ns,Neither,True,No significant effect in either model,0.8907,1.0443,0.9684,1.0705
+Arrester,Encroachment Severity,0.6943,0.702,0.0077,0.9868,0.7368072847406271,ns,1.0086,0.7277,ns,Neither,True,No significant effect in either model,0.9131,1.0664,0.9612,1.0584
+Arrester,PM2.5 Annual Avg,0.6943,0.702,0.0077,1.0013,0.9760959832162753,ns,1.0098,0.7237,ns,Neither,True,No significant effect in either model,0.9213,1.0882,0.9568,1.0657
+Conductor,Health Index Score,0.9096,0.9209,0.0113,1.6459,1.8677311869156145e-14,***,0.5748,0.0,***,Both,True,Significant in both; direction consistent,1.4489,1.8697,0.513,0.644
+Conductor,Lightning Flash Density,0.9096,0.9209,0.0113,0.9016,0.11422068639816568,ns,1.0854,0.1622,ns,Neither,True,No significant effect in either model,0.7929,1.0253,0.9676,1.2176
+Conductor,PM2.5 Annual Avg,0.9096,0.9209,0.0113,0.9161,0.19057580361706597,ns,1.0727,0.2489,ns,Neither,True,No significant effect in either model,0.8035,1.0445,0.9521,1.2087
+Conductor,Avg Humidity (%),0.9096,0.9209,0.0113,1.0785,0.24502296183527794,ns,0.9556,0.4298,ns,Neither,True,No significant effect in either model,0.9495,1.2251,0.8537,1.0697
+Conductor,Voltage (kV),0.9096,0.9209,0.0113,0.9504,0.43432266903324546,ns,1.0375,0.52,ns,Neither,True,No significant effect in either model,0.8366,1.0797,0.9275,1.1604
+Conductor,Encroachment Severity,0.9096,0.9209,0.0113,0.9548,0.47490144149110547,ns,1.0425,0.4528,ns,Neither,True,No significant effect in either model,0.8409,1.084,0.9351,1.1623
+Conductor,Avg Wind Speed (m/s),0.9096,0.9209,0.0113,1.0083,0.8953568539521739,ns,1.013,0.809,ns,Neither,True,No significant effect in either model,0.8912,1.1408,0.9125,1.1245
+Damper,Health Index Score,0.7505,0.7539,0.0034,1.9141,2.556640502326686e-18,***,0.5045,0.0,***,Both,True,Significant in both; direction consistent,1.6545,2.2145,0.4419,0.576
+Damper,Avg Humidity (%),0.7505,0.7539,0.0034,0.9613,0.45332239714195544,ns,1.0362,0.3901,ns,Neither,True,No significant effect in either model,0.867,1.0658,0.9555,1.1236
+Damper,PM2.5 Annual Avg,0.7505,0.7539,0.0034,1.0286,0.5895738850490858,ns,0.9806,0.6308,ns,Neither,True,No significant effect in either model,0.9285,1.1393,0.9053,1.0622
+Damper,Avg Wind Speed (m/s),0.7505,0.7539,0.0034,0.9746,0.6046247557673906,ns,1.028,0.4651,ns,Neither,True,No significant effect in either model,0.884,1.0744,0.9546,1.1071
+Damper,Encroachment Severity,0.7505,0.7539,0.0034,0.9803,0.6899037305502077,ns,1.0138,0.7159,ns,Neither,True,No significant effect in either model,0.889,1.0809,0.9417,1.0914
+Damper,Lightning Flash Density,0.7505,0.7539,0.0034,0.9874,0.8110388939513307,ns,1.0135,0.7495,ns,Neither,True,No significant effect in either model,0.8902,1.0952,0.9336,1.1002
+Damper,Voltage (kV),0.7505,0.7539,0.0034,1.0095,0.8487875250037579,ns,0.9919,0.8304,ns,Neither,True,No significant effect in either model,0.9157,1.113,0.9209,1.0684
+Fittings,Health Index Score,0.8852,0.8981,0.0129,1.6645,2.749869614566886e-15,***,0.5692,0.0,***,Both,True,Significant in both; direction consistent,1.4669,1.8887,0.5082,0.6375
+Fittings,Lightning Flash Density,0.8852,0.8981,0.0129,0.9083,0.13081391232543257,ns,1.0753,0.1953,ns,Neither,True,No significant effect in either model,0.8017,1.029,0.9634,1.2002
+Fittings,PM2.5 Annual Avg,0.8852,0.8981,0.0129,0.9172,0.18591850530640416,ns,1.0648,0.2865,ns,Neither,True,No significant effect in either model,0.8068,1.0425,0.9487,1.1951
+Fittings,Avg Humidity (%),0.8852,0.8981,0.0129,1.0864,0.18970150976676015,ns,0.9489,0.3409,ns,Neither,True,No significant effect in either model,0.9598,1.2297,0.8517,1.0571
+Fittings,Encroachment Severity,0.8852,0.8981,0.0129,1.0311,0.6203896208076352,ns,0.9676,0.521,ns,Neither,True,No significant effect in either model,0.9134,1.1639,0.875,1.07
+Fittings,Avg Wind Speed (m/s),0.8852,0.8981,0.0129,1.0242,0.6949202623025109,ns,0.9895,0.8358,ns,Neither,True,No significant effect in either model,0.9088,1.1543,0.8953,1.0935
+Fittings,Voltage (kV),0.8852,0.8981,0.0129,0.9925,0.9043073177484346,ns,0.9917,0.8759,ns,Neither,True,No significant effect in either model,0.8781,1.1218,0.8934,1.1009
+Insulator,Health Index Score,0.7346,0.7388,0.0042,2.0732,8.208536942623998e-20,***,0.4741,0.0,***,Both,True,Significant in both; direction consistent,1.7722,2.4253,0.4106,0.5474
+Insulator,PM2.5 Annual Avg,0.7346,0.7388,0.0042,1.2836,6.502806667353391e-08,***,0.832,0.0,***,Both,True,Significant in both; direction consistent,1.1725,1.4052,0.7778,0.8901
+Insulator,Avg Humidity (%),0.7346,0.7388,0.0042,1.1872,0.00029317548042385024,***,0.8698,0.0001,***,Both,True,Significant in both; direction consistent,1.0819,1.3027,0.8112,0.9326
+Insulator,Encroachment Severity,0.7346,0.7388,0.0042,0.9562,0.3033450281843717,ns,1.0336,0.2861,ns,Neither,True,No significant effect in either model,0.8782,1.0413,0.9727,1.0984
+Insulator,Avg Wind Speed (m/s),0.7346,0.7388,0.0042,1.0413,0.3440471190145894,ns,0.9769,0.4398,ns,Neither,True,No significant effect in either model,0.9576,1.1323,0.9206,1.0366
+Insulator,Lightning Flash Density,0.7346,0.7388,0.0042,1.0175,0.714315688193917,ns,0.9889,0.7534,ns,Neither,True,No significant effect in either model,0.9272,1.1166,0.9224,1.0602
+Insulator,Voltage (kV),0.7346,0.7388,0.0042,0.9962,0.931475814256117,ns,1.0008,0.9802,ns,Neither,True,No significant effect in either model,0.9144,1.0854,0.9408,1.0646
+Spacer,Health Index Score,0.7954,0.8019,0.0065,1.8356,2.91553479681783e-20,***,0.526,0.0,***,Both,True,Significant in both; direction consistent,1.6133,2.0885,0.4684,0.5906
+Spacer,Encroachment Severity,0.7954,0.8019,0.0065,0.9738,0.6143517974273804,ns,1.0242,0.549,ns,Neither,True,No significant effect in either model,0.8782,1.0798,0.9472,1.1073
+Spacer,Avg Wind Speed (m/s),0.7954,0.8019,0.0065,1.0236,0.6571370969017141,ns,0.9919,0.8395,ns,Neither,True,No significant effect in either model,0.9235,1.1344,0.9172,1.0727
+Spacer,PM2.5 Annual Avg,0.7954,0.8019,0.0065,1.022,0.6918455799935965,ns,0.9885,0.789,ns,Neither,True,No significant effect in either model,0.9178,1.138,0.908,1.0761
+Spacer,Lightning Flash Density,0.7954,0.8019,0.0065,1.0134,0.8093377723104029,ns,0.986,0.7464,ns,Neither,True,No significant effect in either model,0.9097,1.1289,0.9051,1.0741
+Spacer,Voltage (kV),0.7954,0.8019,0.0065,0.9884,0.825955896606205,ns,1.0025,0.9522,ns,Neither,True,No significant effect in either model,0.8906,1.0969,0.9249,1.0865
+Spacer,Avg Humidity (%),0.7954,0.8019,0.0065,1.0008,0.988654303988131,ns,1.0006,0.9889,ns,Neither,True,No significant effect in either model,0.8985,1.1147,0.9187,1.0898

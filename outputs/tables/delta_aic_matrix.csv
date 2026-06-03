@@ -1,0 +1,7 @@
+,Weibull,Exponential,LogLogistic,LogNormal,GeneralizedGamma
+Conductor,0.0,26.71,0.17,1.79,1.85
+Damper,0.0,64.99,0.87,0.69,1.61
+Spacer,0.0,55.68,1.51,4.08,0.66
+Insulator,1.87,93.82,6.82,5.02,0.0
+Fittings,0.0,27.71,0.27,2.03,1.77
+Arrester,0.0,206.25,5.98,17.81,1.18

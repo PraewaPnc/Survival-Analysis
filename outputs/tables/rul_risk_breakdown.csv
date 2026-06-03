@@ -1,0 +1,7 @@
+component,Critical,Warning,Monitor,Healthy,Critical_pct,Warning_pct,Monitor_pct,Healthy_pct
+Arrester,288,277,450,665,17.1,16.5,26.8,39.6
+Conductor,0,0,0,1680,0.0,0.0,0.0,100.0
+Damper,0,0,111,1569,0.0,0.0,6.6,93.4
+Fittings,0,0,0,1680,0.0,0.0,0.0,100.0
+Insulator,116,173,403,988,6.9,10.3,24.0,58.8
+Spacer,0,0,31,1649,0.0,0.0,1.8,98.2

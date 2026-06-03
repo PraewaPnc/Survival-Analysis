@@ -1,0 +1,7 @@
+component,mean_RUL_days,median_RUL_days,std_RUL_days,min_RUL_days,max_RUL_days
+Arrester,2635.2,1115.2,4277.6,0.0,40870.1
+Conductor,16982.4,15451.2,10742.3,1876.7,58595.4
+Damper,5371.8,2957.9,5201.4,863.6,33730.3
+Fittings,14216.6,12002.4,9841.1,1731.8,54385.2
+Insulator,3916.3,1750.8,5563.5,0.0,50248.2
+Spacer,6794.7,3933.8,6003.5,1242.5,36045.4
