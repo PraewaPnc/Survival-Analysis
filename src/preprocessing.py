@@ -18,6 +18,11 @@ import pandas as pd
 DATA_PATH = Path(__file__).parent.parent / "data" / "transmission_line_maintenance_data.csv"
 TABLES_DIR = Path(__file__).parent.parent / "outputs" / "tables"
 
+# Administrative censoring date — every right-censored unit (event_occurred==0)
+# satisfies installation_date + maintenance_period_days == this date, and it is
+# also the latest observed failure date. Units still surviving were censored here.
+STUDY_END_DATE = pd.Timestamp("2025-03-31")
+
 COMPONENTS: list[str] = ["Conductor", "Damper", "Spacer", "Insulator", "Fittings", "Arrester"]
 REGIONS: list[str] = ["Northeast", "North", "Central", "South"]
 

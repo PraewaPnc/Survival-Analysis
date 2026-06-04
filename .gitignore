@@ -8,3 +8,7 @@ venv/
 
 # OS
 .DS_Store
+
+# Large generated artifacts (regenerated from code; exceed GitHub limits)
+models/
+data/weather_forecast_72hr.csv

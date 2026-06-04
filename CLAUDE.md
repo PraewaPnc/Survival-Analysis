@@ -10,7 +10,17 @@ maintenance records enriched with environmental and operational covariates.
 - Rows: 10,080 (one row per component per span)
 - Components: Conductor, Damper, Spacer, Insulator, Fittings, Arrester
 - Lines: 8 lines across 4 regions (Northeast, North, Central, South)
-- Period: 2018–2025
+- Period: 2018–2025 (installation 2018-01-01 → 2021-12-29)
+- Study end / administrative censoring date: **2025-03-31** (`STUDY_END_DATE` in src/preprocessing.py).
+  All censored units satisfy installation_date + maintenance_period_days = 2025-03-31; also the latest observed failure date.
+
+### Weather Forecast Data (predictive labeling pipeline)
+- File: data/weather_forecast_72hr.csv — 483,840 rows (72 hourly rows per span × event);
+  includes age_at_forecast_days and forecast_date (constant within a 72-hr event)
+- Aggregated: data/weather_aggregated.csv — 6,720 rows (one per span_id × event_id), 1,680 spans × 4 events
+- Training set: data/training_dataset.csv — 40,320 rows (span × component × event), 57 cols
+- Time-based split: data/train.csv (32,052 × 51, forecast_date ≤ 2024-03-31) /
+  data/test.csv (8,268 × 51, forecast_date > 2024-03-31)
 
 ## Key Columns
 ### Survival Analysis Columns
@@ -36,7 +46,10 @@ Goodness-of-fit: AIC, Log-Likelihood Value (LLV)
 ## Tech Stack
 - Language : Python 3.12 (system python3)
 - Core libs : lifelines 0.30.3, scikit-survival, pandas, numpy, matplotlib, seaborn
-- Structure : src/ for modules, notebooks/ for EDA, outputs/ for figures and results
+- ML (Phase 8.4) : scikit-learn 1.8, xgboost 3.2, imbalanced-learn (SMOTE), tensorflow 2.21, joblib
+- Structure : src/ for modules, notebooks/ for EDA, outputs/ for figures and results, models/ for pick/keras
+- macOS note : xgboost needs OpenMP. brew's libomp was unavailable, so libomp.dylib (from sklearn's bundled
+  copy) is placed at /opt/homebrew/opt/libomp/lib/libomp.dylib — xgboost's hardcoded rpath. No env var needed.
 
 ## Code Style
 - Type hints on all functions
@@ -45,6 +58,18 @@ Goodness-of-fit: AIC, Log-Likelihood Value (LLV)
 - Results tables saved as CSV to outputs/tables/
 
 ---
+
+## Goal — Phase 8: ML Risk Model (extends existing pipeline)
+Add weather-aware failure risk prediction on top of the existing RUL/AFT results.
+Target variable: fault_to_failure_flag (binary, newly generated)
+
+Label generation: probabilistic simulation
+Formula: sigmoid(2.5*component_score + 2.0*weather_score - 4.2)
+Intercept calibrated from -2.8 → -4.3 → -4.2 to achieve a
+realistic failure rate (~16%) consistent with the
+observed event_occurred rate (13%) in original dataset.
+(component_score gained a 0.1·age term, which lowered the rate to 14.8% at -4.3,
+so the intercept was nudged to -4.2 → 16.1%.)
 
 ## Implementation Status
 
@@ -69,6 +94,13 @@ Directory structure, all source modules, notebook scaffold, requirements.txt.
 - `parametric_hazard` uses lifelines `hazard_at_times()`
 - Figures: fig7–fig12 per component, hazard_overview_2x3.png, kernel_hazard_epanechnikov.png
 
+### Phase 5 — Model Selection ✓  (src/model_selection.py)
+- `goodness_of_fit_table` — Table 2 equivalent (wide format, component × model)
+- `annotate_best` — marks best AIC per component with ✓
+- `delta_aic_matrix` — ΔAIC relative to best model per component
+- Figures: aic_comparison_faceted.png, delta_aic_grouped.png, model_aic_heatmap.png
+- Tables: goodness_of_fit.csv, goodness_of_fit_annotated.csv, delta_aic_matrix.csv
+
 ### Phase 6 — Cox Proportional Hazard ✓  (src/cox_model.py)
 - 7 covariates: lightning_flash_density, avg_wind_speed_ms, avg_humidity_pct,
   pm25_annual_avg, HI_score_last, encroachment_severity (ordinal 0–3), voltage_kv
@@ -76,6 +108,12 @@ Directory structure, all source modules, notebook scaffold, requirements.txt.
 - L2 penalizer=0.1 for numerical stability (EPV range: 11.7–70.9)
 - `prepare_cox_data`, `fit_cox_by_component`, `cox_hr_table`, `concordance_table`
 - Figures: cox_forest_plot.png (2×3 grid), cox_concordance.png
+
+### Phase 6 — PH Assumption Check ✓  (src/cox_model.py)
+- `check_ph_assumption` — Schoenfeld residuals test (rank-transformed time), all 6 components × 7 covariates
+- `compute_schoenfeld_residuals` — scaled residuals with event_time column attached for plotting
+- `_component_prepared` — internal helper for correct component-wise index alignment
+- Figures: ph_assumption_heatmap.png, ph_schoenfeld_{component}.png × 6
 
 ### Phase 7 — Weibull AFT Model ✓  (src/aft_model.py)
 - Same 7 covariates and standardisation pipeline as Cox (reuses `prepare_cox_data`)
@@ -91,32 +129,12 @@ Directory structure, all source modules, notebook scaffold, requirements.txt.
 - `save_acceleration_factors` → outputs/tables/aft_acceleration_factors.csv
 - AF < 1: accelerates failure; AF > 1: decelerates failure; AF = 1: no effect
 
-### Phase 7.7 — Priority Maintenance List ✓  (src/aft_model.py)
-- `generate_priority_list(rul_df, output_cols, print_top_n=20)`
-  Filters risk_category == "Critical", sorts by RUL_days ascending,
-  saves 11 operational columns to priority_maintenance_list.csv,
-  prints top-N header table to stdout.
-- Output columns: span_id, line_id, component, installation_date,
-  maintenance_period_days, HI_score_last, HI_class_last,
-  RUL_days, predicted_lifetime_days, lightning_flash_density, region
-- Table: priority_maintenance_list.csv  (404 rows)
-
-### Phase 7.6 — Cox PH vs. Weibull AFT Comparison ✓  (src/model_comparison.py)
-- `compare_concordance` — C-index table: Cox vs AFT per component + delta
-- `compare_covariates` — merges HR and AF tables; computes agreement
-  (Both / Cox only / AFT only / Neither) and direction consistency
-- `build_full_comparison` — combined DataFrame for CSV + printed summary
-- `save_comparison` — two-section CSV (concordance + covariate) in one file
-- `print_summary` — formatted table + interpretive statements
-- Table: cox_vs_aft_comparison.csv
-
-### Phase 7.5 — RUL Visualisations ✓  (src/visualization.py)
-- `plot_rul_distribution(rul_df, components)` — 2×3 histograms (one per component);
-  each bin coloured by risk category; median RUL as vertical dashed line;
-  x-axis capped at 99th percentile per panel; count annotation per category
-- `plot_risk_category_by_component(breakdown, components)` — stacked 100% bar chart;
-  Critical=red, Warning=orange, Monitor=yellow, Healthy=green; % labels inside segments
-- Figures: rul_distribution.png, risk_category_by_component.png
+### Phase 7.3 — AF Forest Plot ✓  (src/visualization.py)
+- `plot_aft_forest_plot` — 2×3 grid, one panel per component
+- Red = significant (p < 0.05); Grey = not significant (p ≥ 0.05)
+- Marker size ∝ −log₁₀(p); directional x-axis label with background shading
+- Panel subtitle shows (n_sig / 7 significant) count
+- Figure: aft_forest_plot.png
 
 ### Phase 7.4 — Remaining Useful Life (RUL) ✓  (src/aft_model.py)
 - `predict_rul(df, fitters, method='median')` — adds 4 columns to df:
@@ -128,25 +146,136 @@ Directory structure, all source modules, notebook scaffold, requirements.txt.
 - `save_rul_predictions` — saves rul_predictions.csv + summary + breakdown
 - Figures: rul_distribution.png, rul_risk_breakdown.png
 
-### Phase 7.3 — AF Forest Plot ✓  (src/visualization.py)
-- `plot_aft_forest_plot` — 2×3 grid, one panel per component
-- Red = significant (p < 0.05); Grey = not significant (p ≥ 0.05)
-- Marker size ∝ −log₁₀(p); directional x-axis label with background shading
-- Panel subtitle shows (n_sig / 7 significant) count
-- Figure: aft_forest_plot.png
+### Phase 7.5 — RUL Visualisations ✓  (src/visualization.py)
+- `plot_rul_distribution(rul_df, components)` — 2×3 histograms (one per component);
+  each bin coloured by risk category; median RUL as vertical dashed line;
+  x-axis capped at 99th percentile per panel; count annotation per category
+- `plot_risk_category_by_component(breakdown, components)` — stacked 100% bar chart;
+  Critical=red, Warning=orange, Monitor=yellow, Healthy=green; % labels inside segments
+- Figures: rul_distribution.png, risk_category_by_component.png
 
-### Phase 6 — PH Assumption Check ✓  (src/cox_model.py)
-- `check_ph_assumption` — Schoenfeld residuals test (rank-transformed time), all 6 components × 7 covariates
-- `compute_schoenfeld_residuals` — scaled residuals with event_time column attached for plotting
-- `_component_prepared` — internal helper for correct component-wise index alignment
-- Figures: ph_assumption_heatmap.png, ph_schoenfeld_{component}.png × 6
+### Phase 7.6 — Cox PH vs. Weibull AFT Comparison ✓  (src/model_comparison.py)
+- `compare_concordance` — C-index table: Cox vs AFT per component + delta
+- `compare_covariates` — merges HR and AF tables; computes agreement
+  (Both / Cox only / AFT only / Neither) and direction consistency
+- `build_full_comparison` — combined DataFrame for CSV + printed summary
+- `save_comparison` — two-section CSV (concordance + covariate) in one file
+- `print_summary` — formatted table + interpretive statements
+- Table: cox_vs_aft_comparison.csv
 
-### Phase 5 — Model Selection ✓  (src/model_selection.py)
-- `goodness_of_fit_table` — Table 2 equivalent (wide format, component × model)
-- `annotate_best` — marks best AIC per component with ✓
-- `delta_aic_matrix` — ΔAIC relative to best model per component
-- Figures: aic_comparison_faceted.png, delta_aic_grouped.png, model_aic_heatmap.png
-- Tables: goodness_of_fit.csv, goodness_of_fit_annotated.csv, delta_aic_matrix.csv
+### Phase 7.7 — Priority Maintenance List ✓  (src/aft_model.py)
+- `generate_priority_list(rul_df, output_cols, print_top_n=20)`
+  Filters risk_category == "Critical", sorts by RUL_days ascending,
+  saves 11 operational columns to priority_maintenance_list.csv,
+  prints top-N header table to stdout.
+- Output columns: span_id, line_id, component, installation_date,
+  maintenance_period_days, HI_score_last, HI_class_last,
+  RUL_days, predicted_lifetime_days, lightning_flash_density, region
+- Table: priority_maintenance_list.csv  (404 rows)
+
+### Phase 8 — Weather Features & Predictive Labels ✓  (src/weather_features.py)
+**8.1 — Forecast aggregation**
+- `load_forecast` → `aggregate_forecast` → `save_aggregated` → `run`
+- Collapses 483,840 hourly rows → 6,720 rows (one per span_id × event_id) via single
+  `groupby().agg()` driven by `AGG_SPEC` table (source col → (func, output name))
+- 7 features: forecast_wind_max (max gust), forecast_wind_avg (mean wind),
+  forecast_rain_total (sum rain), forecast_pressure_min (min), forecast_humidity_max (max),
+  forecast_temp_max (max), forecast_confidence_avg (mean); region/event_type/forecast_month
+  + age_at_forecast_days + forecast_date carried via `first` (constant within a 72-hr event)
+- Output: data/weather_aggregated.csv
+
+**8.2 — Probabilistic fault-to-failure labels**
+- `build_training_dataset` → `save_training_dataset` → `run_labels`; `_sigmoid` helper (stable logistic)
+- Joins weather_aggregated onto transmission data on `span_id` → 40,320 rows (span × component × event)
+- Drops transmission's own `fault_to_failure_flag` (replaced) and weather's duplicate `region`
+- Adds engineered feature `age_at_forecast_years` = age_at_forecast_days / 365
+- `component_score` = 0.4·(HI_score_last/5) + 0.3·(HI_trend/HI_trend.max) + 0.2·(perm_faults/perm_faults.max)
+  + 0.1·(age_at_forecast_years/age.max)
+- `weather_score` = 0.4·(wind_max/wind_th) + 0.35·(rain_total/rain_th) + 0.25·(1 − pressure_min/1013)
+- Region thresholds (`REGION_THRESHOLDS`): NE (20,150), North (22,180), Central (18,130), South (25,300)
+- `p = sigmoid(2.5·component_score + 2.0·weather_score + SCORE_INTERCEPT)`, Bernoulli draw with RandomState(42)
+- **`SCORE_INTERCEPT = -4.2`** — calibrated from spec's nominal −2.8. forecast_rain_total is a 72-hour *sum*
+  that routinely exceeds region rain thresholds, so −2.8 gave 42.5%; −4.3 brought it to ~16%, but adding the
+  0.1·age term to component_score lowered it to 14.8%, so the intercept was nudged to **−4.2 → 16.09%**
+  (target 15–20%). Coefficients are named constants (`COMPONENT_WEIGHT`, `WEATHER_WEIGHT`, `SCORE_INTERCEPT`).
+- Output: data/training_dataset.csv (40,320 × 57), label distribution 0→33,831 / 1→6,489
+
+**8.3 — Pre-training data quality audit ✓  (src/data_quality.py)**
+- `load_data` → `leakage_check` → `imbalance_check` → `distribution_check` → `split_and_check` → `run`
+- **3.1 Leakage** — point-biserial corr of each numeric feature vs label; mean@label1 vs mean@label0;
+  flags HIGH (|r|>0.7) / MEDIUM (0.4–0.7). Hard-leakage cols dropped on load: failure_mode,
+  maintenance_date, event_occurred. `failure_probability` (label-generation artifact) dropped from clean
+  set — shown in report (r=0.28) but never a real feature. Result: no HIGH/MEDIUM flags; top correlate
+  forecast_pressure_min (r=−0.23).
+- **3.2 Imbalance** — overall dist (16.09%, ratio 5.22, ✓ within 10–25%); per-subgroup rates flagged if
+  <5% or >50% (component/region/event_type). None flagged; range heatwave 6.4% → tropical_cyclone 30.5%.
+- **3.3 Distributions** — numeric: %missing (flag>5%), %zero (flag>80%), std (flag=0). Categorical
+  (component, region, event_type, coastal_proximity, pollution_severity): value counts, flag <1%.
+  Flags: structure_encroachment (95.3% zero), encroachment_caused_trip (81.8% zero); no missing/constants.
+  **Both near-zero-variance cols dropped** after the check, before saving train/test (`NEAR_ZERO_VAR_COLS`).
+- **3.4 Split — TIME-BASED (primary).** `forecast_date` cast to Timestamp; train = rows ≤ cutoff,
+  test = rows > cutoff. **Cutoff = 2024-03-31** (spec's nominal 2023-06-30 gave 67/33, outside 70/30–85/15);
+  2024-03-31 → train 32,052 (79.5%) / test 8,268 (20.5%). Label rate train 16.13% / test 15.94% (both within
+  12–22%, no re-split). span_id leak across the time split = 983 (expected — spans recur across years).
+  Rationale: matches real deployment (train on historical events, predict future events).
+  Secondary **GroupShuffleSplit(groups=span_id)** run as a contrast only (NOT saved): 80/20, span leak = 0.
+  Report includes a side-by-side comparison table of both methods.
+- Outputs: outputs/tables/data_quality_report.md, data/train.csv (32,052 × 51), data/test.csv (8,268 × 51)
+
+### Phase 8.4 — ML Risk Models (RF / XGBoost / LSTM) ✓  (src/ml_models.py)
+- `load_train_test` → `define_features` → `build_preprocessor` → SMOTE → train(RF/XGB/LSTM)
+  → `_metrics` → `plot_importance` → save
+- **4.1 Features = 43.** Excludes target + IDs (span_id, line_id, tower_id, **event_id** added — 5,342-level
+  ID) + forecast_date (split key), installation_date & age_at_forecast_days (absorbed by age_at_forecast_years),
+  failure_probability (already dropped upstream). Split: 35 numeric + 8 categorical.
+- **4.2 Preprocessing** — `ColumnTransformer`: StandardScaler (numeric) + OneHotEncoder(handle_unknown=ignore)
+  (categorical). **`region` added to the one-hot list** (spec omitted it; would otherwise drop via remainder).
+  Fit on train only → 71 processed columns. Saved models/preprocessor.pkl.
+- **4.3 SMOTE** (train only, random_state=42): 0→26,881 / 1→5,171 ⇒ balanced 26,881 / 26,881.
+- **4.4 Imbalance strategy differs per model** (avoids double-correction): RF `class_weight="balanced"` and
+  XGB `scale_pos_weight=neg/pos≈5.2` train on the *original* preprocessed train; **SMOTE-resampled set used
+  only for the LSTM** (no built-in weighting; resampled set shuffled so validation_split is representative).
+  LSTM: 5 weather features as (5,1) pseudo-sequence → LSTM(64) ‖ Dense(32) static → Dense(32) → sigmoid;
+  Adam(1e-3), 50 epochs, batch 256, EarlyStopping(patience=5).
+- **Clean train/val/test protocol** — `run()`: a stratified 10% validation slice is carved from train;
+  preprocessor + all 3 models fit on the 90% slice; XGB early-stops on the val slice; **F1-optimal thresholds
+  (`tune_threshold`, sweep `np.arange(0.1,0.6,0.01)`) are picked on the val slice, never on test.** Thresholds
+  saved to models/thresholds.{json,pkl}: RF 0.11, XGB 0.50, LSTM 0.14.
+- **Production refit** — `refit_full_train()`: with thresholds frozen, preprocessor + all 3 models are **refit
+  on the full 32,052-row train** (XGB reuses 200 trees from the early-stop run, no further early stopping).
+  Overwrites the saved models/preprocessor and ml_model_comparison_final.csv. Final metrics = test @ frozen
+  thresholds. This is the deployed artifact set.
+- **Primary model = RandomForest** (recall 0.830 at thr 0.11 — recall prioritised since a missed failure
+  outweighs a false alarm). XGBoost best F1/ROC-AUC out-of-the-box; LSTM weakest.
+- **4.6 Saved**: models/{rf_model.pkl, xgboost_model.pkl, lstm_model.keras, preprocessor.pkl, thresholds.json/pkl}
+- Figures: ml_feature_importance_rf.png, ml_feature_importance_xgboost.png.
+  Tables: ml_model_comparison.csv (default 0.5), ml_model_comparison_final.csv (val-tuned, authoritative)
+
+### Phase 8.5 — Combined Risk Score & Inference ✓  (src/ml_risk_model.py)
+- **Step 5 `build_combined_risk_scores`** — RF failure prob for every test row (primary model) joined to
+  Phase 7.4 RUL on (span_id, component); misses filled with the component-median RUL.
+  `risk_score = 0.6·failure_prob + 0.4·(1 − RUL_days/RUL_days.max())`;
+  levels: ≥0.7 Critical / ≥0.5 High / ≥0.3 Medium / else Low.
+  Output combined_risk_scores.csv (span_id, component, region, event_type, forecast_date, failure_prob,
+  RUL_days, risk_score, risk_level). All 8,268 test rows matched RUL, **0 filled** (rul_predictions covers all
+  span×component).
+- **Step 5.2 `predict_risk(span_id, forecast_df, rul_days=None)`** — single-span inference: aggregates a raw
+  72-hr forecast (`weather_features.aggregate_forecast`), picks the span's most severe event (max rainfall),
+  broadcasts weather features onto the span's 6 component rows from the maintenance data, runs all 3 models,
+  and returns **span-level risk = worst (max) component probability**. Returns dict: span_id, event_type,
+  failure_prob_{rf,xgboost,lstm}, recommended_threshold (RF 0.11), combined_risk_score, risk_level.
+  If rul_days is None → combined_risk_score = RF failure_prob alone; else blends with RUL (normalised by the
+  global rul_predictions RUL_days.max()). Artifacts loaded once and cached (`_load_artifacts`).
+- **`build_test_predictions(force=False)`** — per-row test predictions: `prob_{rf,xgboost,lstm}` +
+  thresholded `pred_{...}` (frozen thresholds) + `actual`. Idempotent (skips if file exists).
+  → test_predictions.csv. Note: `prob_rf` == `failure_prob` (both `rf.predict_proba(X)[:,1]` on test).
+- **`build_priority_forecast_list`** — maps weather_aggregated.csv onto combined_risk_scores.csv on
+  (span_id, event_type, forecast_date), ranked by risk_score desc. → priority_maintenance_list_forecast.csv
+  (8,268 rows; weather context first, then RUL_days/failure_prob/risk_score/risk_level). All top rows are
+  tropical_cyclone, Northeast, Insulator/Arrester/Damper.
+- **`plot_roc_pr_curves`** — ROC + Precision-Recall curves for all 3 models on test, with each model's
+  val-tuned operating threshold marked. → ml_roc_pr_curves.png. ROC-AUC: XGB 0.676, RF 0.674, LSTM 0.591;
+  Avg-Precision: XGB 0.296, RF 0.290, LSTM 0.214 (PR baseline = 0.159).
 
 ---
 
@@ -180,6 +309,18 @@ Top failure modes: end_of_life (382), lightning_damage (369), mechanical_fatigue
 | Fittings  | 77     | 591 days  |
 | Arrester  | 391    | 418 days  |
 
+### Model Selection — ΔAIC Matrix (Phase 5)
+| Component | Weibull | Exponential | LogLogistic | LogNormal | Gen.Gamma | **Best**        |
+|-----------|---------|-------------|-------------|-----------|-----------|-----------------|
+| Conductor | **0.00** | 26.71      | 0.17        | 1.79      | 1.85      | **Weibull**     |
+| Damper    | **0.00** | 64.99      | 0.87        | 0.69      | 1.61      | **Weibull**     |
+| Spacer    | **0.00** | 55.68      | 1.51        | 4.08      | 0.66      | **Weibull**     |
+| Insulator | 1.87    | 93.82       | 6.82        | 5.02      | **0.00**  | **Gen.Gamma**   |
+| Fittings  | **0.00** | 27.71      | 0.27        | 2.03      | 1.77      | **Weibull**     |
+| Arrester  | **0.00** | 206.25     | 5.98        | 17.81     | 1.18      | **Weibull**     |
+
+Exponential rejected across all components (ΔAIC >> 10 everywhere).
+
 ### Cox PH Results (Phase 6)
 
 **Concordance Index (C-index):**
@@ -200,6 +341,21 @@ Top failure modes: end_of_life (382), lightning_damage (369), mechanical_fatigue
 - `avg_humidity_pct` — significant for Insulator only (HR=1.19, p=0.0003)
 - All other covariates: not statistically significant (ns)
 
+### PH Assumption — Schoenfeld Residuals Test (Phase 6)
+
+Test: `proportional_hazard_test()` with rank-transformed event times, 42 combinations (6 components × 7 covariates).
+
+| Component | Violations (p < 0.05) | Detail |
+|---|---|---|
+| Arrester  | 0 | all p > 0.15 |
+| Conductor | 0 | all p > 0.57 |
+| Damper    | 0 | all p > 0.30 |
+| Fittings  | 0 | all p > 0.23 |
+| Spacer    | 0 | all p > 0.45 |
+| Insulator | **1** | PM2.5 Annual Avg: p = 0.046 |
+
+**Verdict: PH assumption holds.** The single marginal result (Insulator / PM2.5, p=0.046) disappears under Bonferroni correction (threshold = 0.05/42 ≈ 0.001). `HI_score_last`, the dominant predictor, satisfies PH in all 6 components (p > 0.39 everywhere).
+
 ### Weibull AFT Results (Phase 7)
 
 **C-index: AFT consistently slightly better than Cox (+0.003 to +0.013):**
@@ -215,20 +371,16 @@ Top failure modes: end_of_life (382), lightning_damage (369), mechanical_fatigue
 
 **rho_ shape intercept** 0.40–0.58 across components — ρ < 1 indicates monotonically decreasing hazard (consistent with Phase 4 kernel estimates).
 
-### Priority Maintenance List (Phase 7.7)
+### Acceleration Factors (Phase 7.2 — significant only, p < 0.05)
 
-**404 Critical units** (RUL < 1 year) out of 10,080 total (4.0%):
+All 9 significant results have AF < 1 (accelerate failure). No covariate significantly decelerates failure.
 
-| Component | Count | % of component |
-|---|---|---|
-| Arrester  | 288 | 17.1% |
-| Insulator | 116 |  6.9% |
-
-**By region:** Northeast 184, North 132, Central 61, South 27.
-
-**HI pattern:** All 404 Critical units have HI_score_last ≈ 5.0 (mean=4.998). This is an artifact of the simulated data: high-HI components on high-lightning-density lines (LINE-NE2 dominates) exceed the AFT-predicted lifetime sooner because HI_score_last accelerates failure in the model. In real operations, Critical units would typically have low HI.
-
-**All top-20 most urgent units are from LINE-NE2 (Northeast)** — the highest lightning flash density line in the dataset.
+| Component | Covariate | coef | AF [95% CI] | Effect |
+|---|---|---|---|---|
+| All 6 | Health Index Score | −0.55 to −0.82 | **0.44–0.57** [narrow CI] | accelerates failure |
+| Insulator | PM2.5 Annual Avg | −0.184 | **0.832** [0.778–0.890] | accelerates failure |
+| Insulator | Avg Humidity (%) | −0.140 | **0.870** [0.811–0.933] | accelerates failure |
+| Arrester | Lightning Flash Density | −0.115 | **0.892** [0.843–0.944] | accelerates failure |
 
 ### RUL Predictions (Phase 7.4)
 
@@ -263,43 +415,87 @@ Conductor and Fittings: 100% Healthy — consistent with their very low event ra
 - AFT: *"how much LIFE does each covariate add or remove?"* → AF, survival-time modelling
 - Relationship: HR ≈ AF^(−ρ) where ρ ≈ 1.5–1.8 for this dataset
 
-### Acceleration Factors (Phase 7.2 — significant only, p < 0.05)
+### Priority Maintenance List (Phase 7.7)
 
-All 9 significant results have AF < 1 (accelerate failure). No covariate significantly decelerates failure.
+**404 Critical units** (RUL < 1 year) out of 10,080 total (4.0%):
 
-| Component | Covariate | coef | AF [95% CI] | Effect |
-|---|---|---|---|---|
-| All 6 | Health Index Score | −0.55 to −0.82 | **0.44–0.57** [narrow CI] | accelerates failure |
-| Insulator | PM2.5 Annual Avg | −0.184 | **0.832** [0.778–0.890] | accelerates failure |
-| Insulator | Avg Humidity (%) | −0.140 | **0.870** [0.811–0.933] | accelerates failure |
-| Arrester | Lightning Flash Density | −0.115 | **0.892** [0.843–0.944] | accelerates failure |
-
-### PH Assumption — Schoenfeld Residuals Test (Phase 6)
-
-Test: `proportional_hazard_test()` with rank-transformed event times, 42 combinations (6 components × 7 covariates).
-
-| Component | Violations (p < 0.05) | Detail |
+| Component | Count | % of component |
 |---|---|---|
-| Arrester  | 0 | all p > 0.15 |
-| Conductor | 0 | all p > 0.57 |
-| Damper    | 0 | all p > 0.30 |
-| Fittings  | 0 | all p > 0.23 |
-| Spacer    | 0 | all p > 0.45 |
-| Insulator | **1** | PM2.5 Annual Avg: p = 0.046 |
+| Arrester  | 288 | 17.1% |
+| Insulator | 116 |  6.9% |
 
-**Verdict: PH assumption holds.** The single marginal result (Insulator / PM2.5, p=0.046) disappears under Bonferroni correction (threshold = 0.05/42 ≈ 0.001). `HI_score_last`, the dominant predictor, satisfies PH in all 6 components (p > 0.39 everywhere).
+**By region:** Northeast 184, North 132, Central 61, South 27.
 
-### Model Selection — ΔAIC Matrix (Phase 5)
-| Component | Weibull | Exponential | LogLogistic | LogNormal | Gen.Gamma | **Best**        |
-|-----------|---------|-------------|-------------|-----------|-----------|-----------------|
-| Conductor | **0.00** | 26.71      | 0.17        | 1.79      | 1.85      | **Weibull**     |
-| Damper    | **0.00** | 64.99      | 0.87        | 0.69      | 1.61      | **Weibull**     |
-| Spacer    | **0.00** | 55.68      | 1.51        | 4.08      | 0.66      | **Weibull**     |
-| Insulator | 1.87    | 93.82       | 6.82        | 5.02      | **0.00**  | **Gen.Gamma**   |
-| Fittings  | **0.00** | 27.71      | 0.27        | 2.03      | 1.77      | **Weibull**     |
-| Arrester  | **0.00** | 206.25     | 5.98        | 17.81     | 1.18      | **Weibull**     |
+**HI pattern:** All 404 Critical units have HI_score_last ≈ 5.0 (mean=4.998). This is an artifact of the simulated data: high-HI components on high-lightning-density lines (LINE-NE2 dominates) exceed the AFT-predicted lifetime sooner because HI_score_last accelerates failure in the model. In real operations, Critical units would typically have low HI.
 
-Exponential rejected across all components (ΔAIC >> 10 everywhere).
+**All top-20 most urgent units are from LINE-NE2 (Northeast)** — the highest lightning flash density line in the dataset.
+
+### ML Risk Models (Phase 8.4) — test set (8,268 rows)
+
+XGBoost early-stops on a train-only validation slice (no test leakage).
+
+| Model | F1 | ROC-AUC | Precision | Recall | Accuracy |
+|---|---|---|---|---|---|
+| RandomForest | 0.013 | 0.674 | 0.450 | 0.007 | 0.840 |
+| XGBoost | **0.347** | 0.674 | 0.257 | 0.533 | 0.680 |
+| LSTM | 0.277 | 0.607 | 0.234 | 0.338 | 0.719 |
+
+**ROC-AUC is effectively a tie: RandomForest 0.6742 vs XGBoost 0.6739 (Δ 0.0003).** All three ROC-AUCs are
+modest (0.60–0.68) — expected, since the target is a noisy Bernoulli draw whose strongest single predictor
+only reaches point-biserial r≈0.23. **XGBoost is the practical choice**: RF is operationally broken at the
+0.5 threshold (recall 0.007 — predicts almost no positives), whereas XGBoost gives usable recall (0.533) and
+the best F1 (0.347). (Removing the earlier test-set early-stopping leakage lowered XGB from F1 0.355 / AUC
+0.677 to 0.347 / 0.674 — the honest numbers.)
+
+**Final comparison — post-refit on 100% of train, evaluated on test @ frozen val-tuned thresholds.** Protocol:
+(1) threshold tuning is done cleanly on a held-out 10% val slice (no test leakage); (2) thresholds are then
+frozen; (3) all models are **refit on the full 32,052-row train set** so they use all available data. XGBoost
+keeps the tree count from the early-stop run (200; early stopping never triggered).
+
+| Model | Val-tuned thr | F1 | Precision | Recall | ROC-AUC |
+|---|---|---|---|---|---|
+| **RandomForest (primary)** | **0.11** | 0.319 | 0.197 | **0.824** | 0.674 |
+| XGBoost | 0.50 | 0.355 | 0.258 | 0.571 | 0.676 |
+| LSTM | 0.14 | 0.295 | 0.189 | 0.677 | 0.591 |
+
+(Refit vs 90% val-tuned run: XGBoost F1 0.347→0.355 / recall 0.533→0.571 ↑; RF ROC-AUC 0.671→0.674, recall
+0.830→0.824 ≈ flat — small gains from the extra 10% of data, as expected.)
+
+**Primary model = RandomForest.** Rationale: in predictive maintenance a missed failure (false negative) is far
+costlier than a false alarm, so **recall is the priority metric**. At its val-tuned threshold 0.11, RF catches
+**82% of failures** — the highest recall of the three — while XGBoost (best F1/ROC-AUC) catches only 57%. RF's
+low threshold reflects its compressed probabilities (it was never "broken", just miscalibrated for 0.5).
+Thresholds persisted to models/thresholds.json (+ .pkl), unchanged across the refit.
+
+**Notable findings:**
+- **XGBoost is weather-dominated:** `forecast_wind_max` alone = 0.148 importance (3× the next feature),
+  then `forecast_pressure_min`, `event_type=tropical_cyclone`, `forecast_rain_total`. This matches the label
+  formula, where `weather_score` carries the larger (2.0) coefficient.
+- **RandomForest importances are flat** (top feature only ~0.05), spread across mttr_hours, HI_trend, weather,
+  age — no single dominant signal, unlike XGBoost.
+- Engineered/health features (`age_at_forecast_years`, `HI_score_last`, `HI_trend_per_year`) surface in both
+  models' top ranks — consistent with `component_score` in label generation.
+
+### Combined Risk Score (Phase 8.5) — test set (8,268 rows)
+
+`risk_score = 0.6·RF_failure_prob + 0.4·(1 − RUL_norm)`. RUL join: **8,268 matched / 0 filled** (rul_predictions
+covers every span×component, so no component-median fallback was needed).
+
+| risk_level | count | % |
+|---|---|---|
+| Critical (≥0.7) | 14 | 0.2% |
+| High (≥0.5) | 1,783 | 21.6% |
+| Medium (≥0.3) | 5,663 | 68.5% |
+| Low (<0.3) | 808 | 9.8% |
+
+(Post-refit RF probabilities; built on the 100%-train model.) Most units sit in Medium — the 0.4·(1−RUL_norm)
+term keeps scores off the floor even when failure_prob is low, while only 14 units combine high failure
+probability with low RUL to reach Critical. **All top-10 risk_score rows are `tropical_cyclone` events**, mostly
+Northeast Insulators/Arresters/Dampers — the highest-weather × most-vulnerable-component combinations.
+
+**Inference:** `predict_risk("SP-00001", forecast_df, rul_days=...)` returns per-model probabilities, the
+recommended RF threshold (0.11), and the blended `combined_risk_score` + `risk_level` for one span — the
+deployment entry point (train on history, score a fresh 72-hr forecast).
 
 ---
 
@@ -326,11 +522,6 @@ Exponential rejected across all components (ΔAIC >> 10 everywhere).
 | model_aic_heatmap.png | 5 | AIC heatmap (model × component) |
 | cox_forest_plot.png | 6 | Forest plot: HR ± 95% CI per covariate, 2×3 grid |
 | cox_concordance.png | 6 | C-index bar chart per component |
-| aft_forest_plot.png | 7.3 | AF forest plot: red=significant, grey=ns, directional x-axis, 2×3 grid |
-| aft_vs_km.png | 7 | AFT mean-profile prediction vs. Kaplan-Meier, 2×3 grid |
-| aft_hi_profiles.png | 7 | AFT predicted S(t) for HI at ±2, ±1, 0 SD per component |
-| rul_distribution.png | 7.5 | 2×3 histograms of RUL_years; bars coloured by risk category; median line |
-| risk_category_by_component.png | 7.5 | Stacked 100% bar chart; Critical=red, Warning=orange, Monitor=yellow, Healthy=green |
 | ph_assumption_heatmap.png | 6 | PH test p-value heatmap (component × covariate) |
 | ph_schoenfeld_conductor.png | 6 | Schoenfeld residuals vs. time — Conductor |
 | ph_schoenfeld_damper.png | 6 | Schoenfeld residuals vs. time — Damper |
@@ -338,6 +529,11 @@ Exponential rejected across all components (ΔAIC >> 10 everywhere).
 | ph_schoenfeld_insulator.png | 6 | Schoenfeld residuals vs. time — Insulator |
 | ph_schoenfeld_fittings.png | 6 | Schoenfeld residuals vs. time — Fittings |
 | ph_schoenfeld_arrester.png | 6 | Schoenfeld residuals vs. time — Arrester |
+| aft_vs_km.png | 7 | AFT mean-profile prediction vs. Kaplan-Meier, 2×3 grid |
+| aft_hi_profiles.png | 7 | AFT predicted S(t) for HI at ±2, ±1, 0 SD per component |
+| aft_forest_plot.png | 7.3 | AF forest plot: red=significant, grey=ns, directional x-axis, 2×3 grid |
+| rul_distribution.png | 7.5 | 2×3 histograms of RUL_years; bars coloured by risk category; median line |
+| risk_category_by_component.png | 7.5 | Stacked 100% bar chart; Critical=red, Warning=orange, Monitor=yellow, Healthy=green |
 
 ### outputs/tables/
 | File | Phase | Description |
@@ -362,6 +558,6 @@ Exponential rejected across all components (ΔAIC >> 10 everywhere).
 | aft_acceleration_factors.csv | 7.2 | AF, 95% CI, coef, p, sig, effect per covariate × component |
 | rul_predictions.csv | 7.4 | Full df + predicted_lifetime_days, RUL_days, RUL_years, risk_category |
 | rul_summary_by_component.csv | 7.4 | Mean/median/std/min/max RUL per component |
+| rul_risk_breakdown.csv | 7.4 | Risk category counts and % per component |
 | cox_vs_aft_comparison.csv | 7.6 | Two-section CSV: concordance + covariate significance agreement (42 rows) |
 | priority_maintenance_list.csv | 7.7 | 404 Critical units sorted by RUL_days ascending (11 operational columns) |
-| rul_risk_breakdown.csv | 7.4 | Risk category counts and % per component |
