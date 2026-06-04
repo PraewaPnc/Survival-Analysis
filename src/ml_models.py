@@ -224,10 +224,10 @@ def _save_importances(rf, xgb, lgbm, feature_names: list[str]) -> None:
 
 
 def _save_models(rf, xgb, lgbm) -> None:
-    """Persist the three fitted models."""
-    joblib.dump(rf, MODELS_DIR / "rf_model.pkl")
-    joblib.dump(xgb, MODELS_DIR / "xgboost_model.pkl")
-    joblib.dump(lgbm, MODELS_DIR / "lightgbm_model.pkl")
+    """Persist the three fitted models (compressed; RF is ~160 MB uncompressed)."""
+    joblib.dump(rf, MODELS_DIR / "rf_model.pkl", compress=3)
+    joblib.dump(xgb, MODELS_DIR / "xgboost_model.pkl", compress=3)
+    joblib.dump(lgbm, MODELS_DIR / "lightgbm_model.pkl", compress=3)
 
 
 # ---------------------------------------------------------------------------

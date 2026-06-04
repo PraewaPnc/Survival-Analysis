@@ -9,6 +9,6 @@ venv/
 # OS
 .DS_Store
 
-# Large generated artifacts (regenerated from code; exceed GitHub limits)
-models/
+# Trained model artifacts are tracked (compressed; rf_model.pkl ~36 MB).
+# Raw 72-hr forecast stays ignored (483,840 rows, regenerated upstream).
 data/weather_forecast_72hr.csv
