@@ -46,8 +46,8 @@ Goodness-of-fit: AIC, Log-Likelihood Value (LLV)
 ## Tech Stack
 - Language : Python 3.12 (system python3)
 - Core libs : lifelines 0.30.3, scikit-survival, pandas, numpy, matplotlib, seaborn
-- ML (Phase 8.4) : scikit-learn 1.8, xgboost 3.2, imbalanced-learn (SMOTE), tensorflow 2.21, joblib
-- Structure : src/ for modules, notebooks/ for EDA, outputs/ for figures and results, models/ for pick/keras
+- ML (Phase 8.4) : scikit-learn 1.8, xgboost 3.2, lightgbm 4.6, joblib (all tree ensembles; no SMOTE/TF)
+- Structure : src/ for modules, notebooks/ for EDA, outputs/ for figures and results, models/ for pickled models
 - macOS note : xgboost needs OpenMP. brew's libomp was unavailable, so libomp.dylib (from sklearn's bundled
   copy) is placed at /opt/homebrew/opt/libomp/lib/libomp.dylib — xgboost's hardcoded rpath. No env var needed.
 
@@ -215,33 +215,33 @@ simulation — see Phase 8.2 for the label formula and intercept calibration).
   Report includes a side-by-side comparison table of both methods.
 - Outputs: outputs/tables/data_quality_report.md, data/train.csv (32,052 × 51), data/test.csv (8,268 × 51)
 
-### Phase 8.4 — ML Risk Models (RF / XGBoost / LSTM) ✓  (src/ml_models.py)
-- `load_train_test` → `define_features` → `build_preprocessor` → SMOTE → train(RF/XGB/LSTM)
-  → `_metrics` → `plot_importance` → save
+### Phase 8.4 — ML Risk Models (RF / XGBoost / LightGBM) ✓  (src/ml_models.py)
+- `load_train_test` → `define_features` → `build_preprocessor` → train(RF/XGB/LightGBM)
+  → tune thresholds (val slice) → `_metrics` → `plot_importance` → save
 - **4.1 Features = 43.** Excludes target + IDs (span_id, line_id, tower_id, **event_id** added — 5,342-level
   ID) + forecast_date (split key), installation_date & age_at_forecast_days (absorbed by age_at_forecast_years),
   failure_probability (already dropped upstream). Split: 35 numeric + 8 categorical.
 - **4.2 Preprocessing** — `ColumnTransformer`: StandardScaler (numeric) + OneHotEncoder(handle_unknown=ignore)
   (categorical). **`region` added to the one-hot list** (spec omitted it; would otherwise drop via remainder).
   Fit on train only → 71 processed columns. Saved models/preprocessor.pkl.
-- **4.3 SMOTE** (train only, random_state=42): 0→26,881 / 1→5,171 ⇒ balanced 26,881 / 26,881.
-- **4.4 Imbalance strategy differs per model** (avoids double-correction): RF `class_weight="balanced"` and
-  XGB `scale_pos_weight=neg/pos≈5.2` train on the *original* preprocessed train; **SMOTE-resampled set used
-  only for the LSTM** (no built-in weighting; resampled set shuffled so validation_split is representative).
-  LSTM: 5 weather features as (5,1) pseudo-sequence → LSTM(64) ‖ Dense(32) static → Dense(32) → sigmoid;
-  Adam(1e-3), 50 epochs, batch 256, EarlyStopping(patience=5).
+- **4.4 All three models are tree ensembles with built-in class weighting, so no resampling (SMOTE removed**
+  — applying SMOTE *and* class weighting would double-correct): RF `class_weight="balanced"`;
+  XGB `scale_pos_weight=neg/pos≈5.2` (early-stops 20 rounds on val); LightGBM `class_weight="balanced"`,
+  `num_leaves=31`, `subsample=0.8`/`subsample_freq=1`, `colsample_bytree=0.8` (early-stops 20 rounds on val).
+  All share `learning_rate=0.05`, `max_depth=6`, `n_estimators=200`. (**LSTM was dropped** — the aggregated
+  5-feature "pseudo-sequence" had no temporal signal and was the weakest model; a third tree model fits the
+  tabular data better.)
 - **Clean train/val/test protocol** — `run()`: a stratified 10% validation slice is carved from train;
-  preprocessor + all 3 models fit on the 90% slice; XGB early-stops on the val slice; **F1-optimal thresholds
-  (`tune_threshold`, sweep `np.arange(0.1,0.6,0.01)`) are picked on the val slice, never on test.** Thresholds
-  saved to models/thresholds.{json,pkl}: RF 0.11, XGB 0.50, LSTM 0.14.
+  preprocessor + all 3 models fit on the 90% slice; XGB & LightGBM early-stop on the val slice; **F1-optimal
+  thresholds (`tune_threshold`, sweep `np.arange(0.1,0.6,0.01)`) are picked on the val slice, never on test.**
+  Thresholds saved to models/thresholds.{json,pkl}: RF 0.11, XGB 0.50, LightGBM 0.55.
 - **Production refit** — `refit_full_train()`: with thresholds frozen, preprocessor + all 3 models are **refit
-  on the full 32,052-row train** (XGB reuses 200 trees from the early-stop run, no further early stopping).
-  Overwrites the saved models/preprocessor and ml_model_comparison_final.csv. Final metrics = test @ frozen
-  thresholds. This is the deployed artifact set.
-- **Primary model = RandomForest** (recall 0.830 at thr 0.11 — recall prioritised since a missed failure
-  outweighs a false alarm). XGBoost best F1/ROC-AUC out-of-the-box; LSTM weakest.
-- **4.6 Saved**: models/{rf_model.pkl, xgboost_model.pkl, lstm_model.keras, preprocessor.pkl, thresholds.json/pkl}
-- Figures: ml_feature_importance_rf.png, ml_feature_importance_xgboost.png.
+  on the full 32,052-row train** (XGB & LightGBM reuse the 200 trees from their early-stop runs). Overwrites
+  the saved models/preprocessor and ml_model_comparison_final.csv. Final metrics = test @ frozen thresholds.
+- **Primary model = RandomForest** (recall 0.824 at thr 0.11 — recall prioritised since a missed failure
+  outweighs a false alarm). **LightGBM best F1/ROC-AUC** (0.359 / 0.680); XGBoost in between.
+- **4.6 Saved**: models/{rf_model.pkl, xgboost_model.pkl, lightgbm_model.pkl, preprocessor.pkl, thresholds.json/pkl}
+- Figures: ml_feature_importance_{rf,xgboost,lightgbm}.png.
   Tables: ml_model_comparison.csv (default 0.5), ml_model_comparison_final.csv (val-tuned, authoritative)
 
 ### Phase 8.5 — Combined Risk Score & Inference ✓  (src/ml_risk_model.py)
@@ -256,10 +256,10 @@ simulation — see Phase 8.2 for the label formula and intercept calibration).
   72-hr forecast (`weather_features.aggregate_forecast`), picks the span's most severe event (max rainfall),
   broadcasts weather features onto the span's 6 component rows from the maintenance data, runs all 3 models,
   and returns **span-level risk = worst (max) component probability**. Returns dict: span_id, event_type,
-  failure_prob_{rf,xgboost,lstm}, recommended_threshold (RF 0.11), combined_risk_score, risk_level.
+  failure_prob_{rf,xgboost,lightgbm}, recommended_threshold (RF 0.11), combined_risk_score, risk_level.
   If rul_days is None → combined_risk_score = RF failure_prob alone; else blends with RUL (normalised by the
   global rul_predictions RUL_days.max()). Artifacts loaded once and cached (`_load_artifacts`).
-- **`build_test_predictions(force=False)`** — per-row test predictions: `prob_{rf,xgboost,lstm}` +
+- **`build_test_predictions(force=False)`** — per-row test predictions: `prob_{rf,xgboost,lightgbm}` +
   thresholded `pred_{...}` (frozen thresholds) + `actual`. Idempotent (skips if file exists).
   → test_predictions.csv. Note: `prob_rf` == `failure_prob` (both `rf.predict_proba(X)[:,1]` on test).
 - **`build_priority_forecast_list`** — maps weather_aggregated.csv onto combined_risk_scores.csv on
@@ -267,8 +267,8 @@ simulation — see Phase 8.2 for the label formula and intercept calibration).
   (8,268 rows; weather context first, then RUL_days/failure_prob/risk_score/risk_level). All top rows are
   tropical_cyclone, Northeast, Insulator/Arrester/Damper.
 - **`plot_roc_pr_curves`** — ROC + Precision-Recall curves for all 3 models on test, with each model's
-  val-tuned operating threshold marked. → ml_roc_pr_curves.png. ROC-AUC: XGB 0.676, RF 0.674, LSTM 0.591;
-  Avg-Precision: XGB 0.296, RF 0.290, LSTM 0.214 (PR baseline = 0.159).
+  val-tuned operating threshold marked. → ml_roc_pr_curves.png. ROC-AUC: LightGBM 0.680, XGB 0.676, RF 0.674;
+  Avg-Precision: LightGBM 0.299, XGB 0.296, RF 0.290 (PR baseline = 0.159).
 
 ---
 
@@ -425,49 +425,36 @@ Conductor and Fittings: 100% Healthy — consistent with their very low event ra
 
 ### ML Risk Models (Phase 8.4) — test set (8,268 rows)
 
-XGBoost early-stops on a train-only validation slice (no test leakage).
+Three tree ensembles (RF / XGBoost / LightGBM). **Final comparison — post-refit on 100% of train, evaluated on
+test @ frozen val-tuned thresholds.** Protocol: (1) threshold tuning done on a held-out 10% val slice (no test
+leakage); (2) thresholds frozen; (3) models refit on the full 32,052-row train (XGB & LightGBM reuse their
+200 early-stop trees).
 
-| Model | F1 | ROC-AUC | Precision | Recall | Accuracy |
-|---|---|---|---|---|---|
-| RandomForest | 0.013 | 0.674 | 0.450 | 0.007 | 0.840 |
-| XGBoost | **0.347** | 0.674 | 0.257 | 0.533 | 0.680 |
-| LSTM | 0.277 | 0.607 | 0.234 | 0.338 | 0.719 |
+| Model | Val-tuned thr | F1 | Precision | Recall | ROC-AUC | Accuracy |
+|---|---|---|---|---|---|---|
+| **RandomForest (primary)** | **0.11** | 0.319 | 0.197 | **0.824** | 0.674 | 0.438 |
+| XGBoost | 0.50 | 0.355 | 0.258 | 0.571 | 0.676 | 0.670 |
+| **LightGBM** | 0.55 | **0.359** | 0.278 | 0.505 | **0.680** | 0.712 |
 
-**ROC-AUC is effectively a tie: RandomForest 0.6742 vs XGBoost 0.6739 (Δ 0.0003).** All three ROC-AUCs are
-modest (0.60–0.68) — expected, since the target is a noisy Bernoulli draw whose strongest single predictor
-only reaches point-biserial r≈0.23. **XGBoost is the practical choice**: RF is operationally broken at the
-0.5 threshold (recall 0.007 — predicts almost no positives), whereas XGBoost gives usable recall (0.533) and
-the best F1 (0.347). (Removing the earlier test-set early-stopping leakage lowered XGB from F1 0.355 / AUC
-0.677 to 0.347 / 0.674 — the honest numbers.)
-
-**Final comparison — post-refit on 100% of train, evaluated on test @ frozen val-tuned thresholds.** Protocol:
-(1) threshold tuning is done cleanly on a held-out 10% val slice (no test leakage); (2) thresholds are then
-frozen; (3) all models are **refit on the full 32,052-row train set** so they use all available data. XGBoost
-keeps the tree count from the early-stop run (200; early stopping never triggered).
-
-| Model | Val-tuned thr | F1 | Precision | Recall | ROC-AUC |
-|---|---|---|---|---|---|
-| **RandomForest (primary)** | **0.11** | 0.319 | 0.197 | **0.824** | 0.674 |
-| XGBoost | 0.50 | 0.355 | 0.258 | 0.571 | 0.676 |
-| LSTM | 0.14 | 0.295 | 0.189 | 0.677 | 0.591 |
-
-(Refit vs 90% val-tuned run: XGBoost F1 0.347→0.355 / recall 0.533→0.571 ↑; RF ROC-AUC 0.671→0.674, recall
-0.830→0.824 ≈ flat — small gains from the extra 10% of data, as expected.)
+All three ROC-AUCs are modest (0.67–0.68) — expected, since the target is a noisy Bernoulli draw whose strongest
+single predictor only reaches point-biserial r≈0.23. **LightGBM is the best by F1 and ROC-AUC**; the three are
+within ~0.006 ROC-AUC of each other.
 
 **Primary model = RandomForest.** Rationale: in predictive maintenance a missed failure (false negative) is far
 costlier than a false alarm, so **recall is the priority metric**. At its val-tuned threshold 0.11, RF catches
-**82% of failures** — the highest recall of the three — while XGBoost (best F1/ROC-AUC) catches only 57%. RF's
-low threshold reflects its compressed probabilities (it was never "broken", just miscalibrated for 0.5).
-Thresholds persisted to models/thresholds.json (+ .pkl), unchanged across the refit.
+**82% of failures** — the highest recall — while LightGBM/XGBoost catch 51%/57%. RF's low threshold reflects its
+compressed probabilities (not "broken", just calibrated low). Thresholds persisted to models/thresholds.json
+(+ .pkl): RF 0.11 / XGB 0.50 / LightGBM 0.55. (LSTM was dropped — its aggregated 5-feature pseudo-sequence had
+no temporal signal and trailed all tree models; a third tree model suits the tabular data better.)
 
 **Notable findings:**
 - **XGBoost is weather-dominated:** `forecast_wind_max` alone = 0.148 importance (3× the next feature),
-  then `forecast_pressure_min`, `event_type=tropical_cyclone`, `forecast_rain_total`. This matches the label
+  then `forecast_pressure_min`, `event_type=tropical_cyclone`, `forecast_rain_total`. Matches the label
   formula, where `weather_score` carries the larger (2.0) coefficient.
-- **RandomForest importances are flat** (top feature only ~0.05), spread across mttr_hours, HI_trend, weather,
-  age — no single dominant signal, unlike XGBoost.
-- Engineered/health features (`age_at_forecast_years`, `HI_score_last`, `HI_trend_per_year`) surface in both
-  models' top ranks — consistent with `component_score` in label generation.
+- **LightGBM & RandomForest spread importance more evenly** — LightGBM's top splits are mttr_hours, HI_trend,
+  age_at_forecast_years, forecast_confidence, HI_score, forecast_rain; RF is similarly flat (top ~0.05).
+- Engineered/health features (`age_at_forecast_years`, `HI_score_last`, `HI_trend_per_year`) surface in all
+  three models' top ranks — consistent with `component_score` in label generation.
 
 ### Combined Risk Score (Phase 8.5) — test set (8,268 rows)
 
@@ -534,6 +521,7 @@ deployment entry point (train on history, score a fresh 72-hr forecast).
 | rul_risk_breakdown.png | 7.5 | Risk category counts/% per component |
 | ml_feature_importance_rf.png | 8.4 | RandomForest feature importances (top features) |
 | ml_feature_importance_xgboost.png | 8.4 | XGBoost feature importances (weather-dominated) |
+| ml_feature_importance_lightgbm.png | 8.4 | LightGBM feature importances (top splits) |
 | ml_roc_pr_curves.png | 8.5 | ROC + Precision-Recall curves, all 3 models, val-tuned thresholds marked |
 | failure_prob_vs_rul.png | Pres | RF failure probability vs. RUL_days scatter (presentation) |
 | risk_distribution_by_component.png | Pres | Combined risk-level distribution per component (presentation) |
@@ -568,8 +556,8 @@ deployment entry point (train on history, score a fresh 72-hr forecast).
 | cox_vs_aft_comparison.csv | 7.6 | Two-section CSV: concordance + covariate significance agreement (42 rows) |
 | priority_maintenance_list.csv | 7.7 | 404 Critical units sorted by RUL_days ascending (11 operational columns) |
 | data_quality_report.md | 8.3 | Leakage / imbalance / distribution audit + train-test split comparison |
-| ml_model_comparison.csv | 8.4 | RF/XGB/LSTM metrics at default 0.5 threshold |
-| ml_model_comparison_final.csv | 8.4 | RF/XGB/LSTM metrics, val-tuned thresholds, post-refit (authoritative) |
+| ml_model_comparison.csv | 8.4 | RF/XGB/LightGBM metrics at default 0.5 threshold |
+| ml_model_comparison_final.csv | 8.4 | RF/XGB/LightGBM metrics, val-tuned thresholds, post-refit (authoritative) |
 | combined_risk_scores.csv | 8.5 | Per-test-row combined risk: failure_prob + RUL → risk_score, risk_level (8,268 rows) |
-| test_predictions.csv | 8.5 | Per-test-row prob_{rf,xgboost,lstm} + thresholded pred_{...} + actual |
+| test_predictions.csv | 8.5 | Per-test-row prob_{rf,xgboost,lightgbm} + thresholded pred_{...} + actual |
 | priority_maintenance_list_forecast.csv | 8.5 | Weather-context priority list ranked by risk_score desc (8,268 rows) |

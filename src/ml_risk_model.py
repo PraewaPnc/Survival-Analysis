@@ -22,8 +22,7 @@ from sklearn.metrics import (
 )
 
 from src.ml_models import (
-    CATEGORICAL_FEATURES, EXCLUDE_COLS, LSTM_SEQ_FEATURES, TARGET,
-    _seq_static_indices, _split_seq_static, define_features,
+    CATEGORICAL_FEATURES, EXCLUDE_COLS, TARGET, define_features,
 )
 from src.weather_features import aggregate_forecast
 
@@ -47,8 +46,8 @@ PRIORITY_FORECAST_PATH = TABLES_DIR / "priority_maintenance_list_forecast.csv"
 FIGURES_DIR = ROOT / "outputs" / "figures"
 ROC_PR_PATH = FIGURES_DIR / "ml_roc_pr_curves.png"
 
-MODEL_COLORS = {"RandomForest": "#d62728", "XGBoost": "#1f77b4", "LSTM": "#2ca02c"}
-_KEY_TO_NAME = {"rf": "RandomForest", "xgboost": "XGBoost", "lstm": "LSTM"}
+MODEL_COLORS = {"RandomForest": "#d62728", "XGBoost": "#1f77b4", "LightGBM": "#2ca02c"}
+_KEY_TO_NAME = {"rf": "RandomForest", "xgboost": "XGBoost", "lightgbm": "LightGBM"}
 
 ID_PASSTHROUGH = ["span_id", "component", "region", "event_type", "forecast_date"]
 
@@ -78,14 +77,12 @@ def _load_artifacts() -> dict[str, object]:
     """Load and cache preprocessor, models, thresholds, and feature metadata."""
     if _CACHE:
         return _CACHE
-    from tensorflow.keras.models import load_model
-
     pre = joblib.load(MODELS_DIR / "preprocessor.pkl")
     _CACHE.update({
         "pre": pre,
         "rf": joblib.load(MODELS_DIR / "rf_model.pkl"),
         "xgb": joblib.load(MODELS_DIR / "xgboost_model.pkl"),
-        "lstm": load_model(MODELS_DIR / "lstm_model.keras"),
+        "lightgbm": joblib.load(MODELS_DIR / "lightgbm_model.pkl"),
         "thresholds": joblib.load(MODELS_DIR / "thresholds.pkl"),
         "feature_names": list(pre.get_feature_names_out()),
     })
@@ -103,12 +100,10 @@ def _risk_level(score: float) -> str:
 def _predict_probas(X_processed: np.ndarray) -> dict[str, np.ndarray]:
     """Positive-class probabilities from all three models on a processed matrix."""
     art = _load_artifacts()
-    seq_idx, static_idx = _seq_static_indices(art["feature_names"])
-    X_seq, X_static = _split_seq_static(X_processed, seq_idx, static_idx)
     return {
         "rf": art["rf"].predict_proba(X_processed)[:, 1],
         "xgboost": art["xgb"].predict_proba(X_processed)[:, 1],
-        "lstm": art["lstm"].predict([X_seq, X_static], verbose=0).ravel(),
+        "lightgbm": art["lightgbm"].predict_proba(X_processed)[:, 1],
     }
 
 
@@ -144,7 +139,7 @@ def build_test_predictions(force: bool = False, verbose: bool = True) -> pd.Data
 
     out = test[ID_PASSTHROUGH].copy()
     out["actual"] = test[TARGET].to_numpy()
-    for key, model in (("rf", "RandomForest"), ("xgboost", "XGBoost"), ("lstm", "LSTM")):
+    for key, model in (("rf", "RandomForest"), ("xgboost", "XGBoost"), ("lightgbm", "LightGBM")):
         out[f"prob_{key}"] = probas[key]
         out[f"pred_{key}"] = (probas[key] >= thr[model]).astype(int)
 
@@ -153,7 +148,7 @@ def build_test_predictions(force: bool = False, verbose: bool = True) -> pd.Data
         n = len(out)
         print(f"Test predictions: {n} rows → {TEST_PRED_PATH.name}")
         print(f"Actual positive rate: {out['actual'].mean():.2%}")
-        for key, model in (("rf", "RandomForest"), ("xgboost", "XGBoost"), ("lstm", "LSTM")):
+        for key, model in (("rf", "RandomForest"), ("xgboost", "XGBoost"), ("lightgbm", "LightGBM")):
             flagged = int(out[f"pred_{key}"].sum())
             print(f"  {model:13s} (thr {thr[model]:.2f}): {flagged} flagged "
                   f"({flagged / n:.1%})")
@@ -360,7 +355,7 @@ def predict_risk(
 
     Returns:
         dict with keys: span_id, event_type, failure_prob_rf,
-        failure_prob_xgboost, failure_prob_lstm, recommended_threshold,
+        failure_prob_xgboost, failure_prob_lightgbm, recommended_threshold,
         combined_risk_score, risk_level.
     """
     art = _load_artifacts()
@@ -394,7 +389,7 @@ def predict_risk(
     # Span-level risk = worst component (max probability)
     prob_rf = float(probas["rf"].max())
     prob_xgb = float(probas["xgboost"].max())
-    prob_lstm = float(probas["lstm"].max())
+    prob_lightgbm = float(probas["lightgbm"].max())
 
     if rul_days is None:
         combined = prob_rf
@@ -408,7 +403,7 @@ def predict_risk(
         "event_type": str(event["event_type"]),
         "failure_prob_rf": prob_rf,
         "failure_prob_xgboost": prob_xgb,
-        "failure_prob_lstm": prob_lstm,
+        "failure_prob_lightgbm": prob_lightgbm,
         "recommended_threshold": float(art["thresholds"][PRIMARY_MODEL]),
         "combined_risk_score": float(combined),
         "risk_level": _risk_level(combined),

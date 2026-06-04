@@ -1,32 +1,29 @@
 """Phase 8.4 — weather-aware failure-risk classifiers.
 
-Trains and compares three models on the time-based train/test split:
-Random Forest, XGBoost, and an LSTM (pseudo-sequence over 5 weather features).
+Trains and compares three gradient/ensemble tree models on the time-based
+train/test split: Random Forest, XGBoost, and LightGBM.
 
-    define_features → build_preprocessor → SMOTE → train(RF, XGB, LSTM)
-                    → evaluate → feature importances → save
+    define_features → build_preprocessor → train(RF, XGB, LightGBM)
+                    → tune thresholds (val slice) → evaluate → importances → save
 
-Imbalance handling differs per model (documented in NOTE below):
-  - RF  uses class_weight="balanced"   on the original preprocessed train
-  - XGB uses scale_pos_weight=neg/pos  on the original preprocessed train
-  - LSTM has no built-in weighting, so it trains on the SMOTE-resampled set
-Applying SMOTE *and* class weighting to the tree models would double-correct
-the imbalance, so SMOTE is reserved for the LSTM.
+All three models have built-in class-imbalance handling, so no resampling
+(SMOTE) is used — that would double-correct the imbalance:
+  - RF       — class_weight="balanced"
+  - XGBoost  — scale_pos_weight = neg/pos
+  - LightGBM — class_weight="balanced"
 """
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")  # quiet TensorFlow
 
 import joblib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from imblearn.over_sampling import SMOTE
+import lightgbm as lgb
+from lightgbm import LGBMClassifier
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -65,12 +62,6 @@ EXCLUDE_COLS: list[str] = [
 CATEGORICAL_FEATURES: list[str] = [
     "component", "event_type", "coastal_proximity", "pollution_severity",
     "encroachment_severity", "fault_type_most_common", "HI_class_last", "region",
-]
-
-# The 5 weather features treated as a pseudo-sequence for the LSTM (4.4).
-LSTM_SEQ_FEATURES: list[str] = [
-    "forecast_wind_max", "forecast_wind_avg", "forecast_rain_total",
-    "forecast_pressure_min", "forecast_humidity_max",
 ]
 
 RANDOM_STATE = 42
@@ -128,52 +119,35 @@ def build_preprocessor(numeric: list[str], categorical: list[str]) -> ColumnTran
 
 
 # ---------------------------------------------------------------------------
-# 4.4 — LSTM helpers
+# 4.4 — Model factories
 # ---------------------------------------------------------------------------
 
-def _seq_static_indices(feature_names: list[str]) -> tuple[list[int], list[int]]:
-    """Indices of the 5 weather-sequence columns vs. the static remainder."""
-    seq_names = {f"num__{f}" for f in LSTM_SEQ_FEATURES}
-    seq_idx = [i for i, n in enumerate(feature_names) if n in seq_names]
-    static_idx = [i for i in range(len(feature_names)) if i not in seq_idx]
-    return seq_idx, static_idx
+def build_rf() -> RandomForestClassifier:
+    """Random Forest with balanced class weights."""
+    return RandomForestClassifier(
+        n_estimators=200, class_weight="balanced",
+        random_state=RANDOM_STATE, n_jobs=-1,
+    )
 
 
-def _split_seq_static(
-    X: np.ndarray, seq_idx: list[int], static_idx: list[int]
-) -> tuple[np.ndarray, np.ndarray]:
-    """Reshape into ((n, 5, 1) sequence, (n, k) static) inputs."""
-    X_seq = X[:, seq_idx].reshape(-1, len(seq_idx), 1)
-    X_static = X[:, static_idx]
-    return X_seq, X_static
+def build_xgb(scale_pos_weight: float, n_estimators: int = 200,
+              early_stopping: bool = False) -> XGBClassifier:
+    """XGBoost with scale_pos_weight; optional early stopping."""
+    return XGBClassifier(
+        n_estimators=n_estimators, learning_rate=0.05, max_depth=6,
+        subsample=0.8, colsample_bytree=0.8, scale_pos_weight=scale_pos_weight,
+        random_state=RANDOM_STATE, n_jobs=-1, eval_metric="logloss",
+        early_stopping_rounds=20 if early_stopping else None,
+    )
 
 
-def build_lstm(n_static: int) -> "object":
-    """Build the LSTM + static-context classifier (4.4).
-
-    Args:
-        n_static: Number of static (non-sequence) features.
-
-    Returns:
-        Compiled Keras Model with two inputs [sequence, static].
-    """
-    from tensorflow.keras import Input, Model
-    from tensorflow.keras.layers import LSTM, Dense, Concatenate
-    from tensorflow.keras.optimizers import Adam
-
-    seq_in = Input(shape=(len(LSTM_SEQ_FEATURES), 1), name="weather_seq")
-    static_in = Input(shape=(n_static,), name="static")
-
-    x_seq = LSTM(64, return_sequences=False)(seq_in)
-    x_static = Dense(32, activation="relu")(static_in)
-    x = Concatenate()([x_seq, x_static])
-    x = Dense(32, activation="relu")(x)
-    out = Dense(1, activation="sigmoid")(x)
-
-    model = Model(inputs=[seq_in, static_in], outputs=out)
-    model.compile(optimizer=Adam(learning_rate=0.001), loss="binary_crossentropy",
-                  metrics=["accuracy"])
-    return model
+def build_lgbm(n_estimators: int = 200) -> LGBMClassifier:
+    """LightGBM with balanced class weights (mirrors RF's strategy)."""
+    return LGBMClassifier(
+        n_estimators=n_estimators, learning_rate=0.05, max_depth=6,
+        num_leaves=31, subsample=0.8, subsample_freq=1, colsample_bytree=0.8,
+        class_weight="balanced", random_state=RANDOM_STATE, n_jobs=-1, verbose=-1,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +171,7 @@ def _metrics(name: str, y_true: np.ndarray, proba: np.ndarray,
 def tune_threshold(y_true: np.ndarray, proba: np.ndarray) -> float:
     """Threshold in [0.1, 0.6) that maximises F1 (grid step 0.01).
 
-    Note: tuned on the evaluation (test) set as specified, so the reported
-    optimal-threshold metrics are mildly optimistic — the threshold "sees" the
-    same set it is scored on.
+    Tuned on a held-out validation slice (never on test).
 
     Args:
         y_true: Binary ground-truth labels.
@@ -227,15 +199,46 @@ def plot_importance(model: "object", feature_names: list[str], title: str, path:
     plt.close(fig)
 
 
+def _final_table(test_proba: dict[str, np.ndarray], y_test: np.ndarray,
+                 thresholds: dict[str, float]) -> pd.DataFrame:
+    """Build the test-metrics-at-val-tuned-threshold comparison table."""
+    rows: list[dict[str, object]] = []
+    for name, proba in test_proba.items():
+        m = _metrics(name, y_test, proba, threshold=thresholds[name])
+        rows.append({
+            "Model": name, "val_tuned_threshold": round(thresholds[name], 2),
+            "F1": m["F1"], "Precision": m["Precision"],
+            "Recall": m["Recall"], "ROC_AUC": m["ROC_AUC"], "Accuracy": m["Accuracy"],
+        })
+    return pd.DataFrame(rows)
+
+
+def _save_importances(rf, xgb, lgbm, feature_names: list[str]) -> None:
+    """Save the three feature-importance figures."""
+    plot_importance(rf, feature_names, "Random Forest — Top 20 Feature Importances",
+                    FIGURES_DIR / "ml_feature_importance_rf.png")
+    plot_importance(xgb, feature_names, "XGBoost — Top 20 Feature Importances",
+                    FIGURES_DIR / "ml_feature_importance_xgboost.png")
+    plot_importance(lgbm, feature_names, "LightGBM — Top 20 Feature Importances",
+                    FIGURES_DIR / "ml_feature_importance_lightgbm.png")
+
+
+def _save_models(rf, xgb, lgbm) -> None:
+    """Persist the three fitted models."""
+    joblib.dump(rf, MODELS_DIR / "rf_model.pkl")
+    joblib.dump(xgb, MODELS_DIR / "xgboost_model.pkl")
+    joblib.dump(lgbm, MODELS_DIR / "lightgbm_model.pkl")
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
 def run(verbose: bool = True) -> pd.DataFrame:
-    """Run the full Phase 8.4 train/evaluate/save pipeline.
+    """Train on a 90% slice, tune thresholds on the held-out 10%, evaluate on test.
 
     Returns:
-        The model comparison DataFrame (also saved to CSV).
+        The final comparison DataFrame (also saved to CSV).
     """
     np.random.seed(RANDOM_STATE)
     for d in (MODELS_DIR, TABLES_DIR, FIGURES_DIR):
@@ -248,14 +251,11 @@ def run(verbose: bool = True) -> pd.DataFrame:
         print(f"=== 4.1 Feature matrix: {len(feature_cols)} features ===")
         print(f"  numeric ({len(numeric)}): {numeric}")
         print(f"  categorical ({len(categorical)}): {categorical}")
-        print(", ".join(feature_cols))
 
     X_train, y_train = train_df[feature_cols], train_df[TARGET].to_numpy()
     X_test, y_test = test_df[feature_cols], test_df[TARGET].to_numpy()
 
-    # --- Carve a stratified 10% validation slice from train (raw) ----------
-    # Models train on the 90% slice; thresholds are tuned on the held-out 10%.
-    # Test is never touched for fitting or tuning.
+    # Stratified 10% validation slice — models train on 90%, thresholds tuned on 10%.
     X_tr_raw, X_val_raw, y_tr, y_val = train_test_split(
         X_train, y_train, test_size=0.1, stratify=y_train, random_state=RANDOM_STATE,
     )
@@ -271,57 +271,26 @@ def run(verbose: bool = True) -> pd.DataFrame:
         print(f"\n=== 4.2 Preprocessed matrix: {X_tr_p.shape[1]} columns "
               f"(train slice {X_tr_p.shape[0]}, val {X_val_p.shape[0]}, test {X_test_p.shape[0]}) ===")
 
-    # --- 4.3 SMOTE (train slice only) --------------------------------------
-    smote = SMOTE(random_state=RANDOM_STATE)
-    X_res, y_res = smote.fit_resample(X_tr_p, y_tr)
-    perm = np.random.permutation(len(y_res))  # shuffle for LSTM validation_split
-    X_res, y_res = X_res[perm], y_res[perm]
-    if verbose:
-        before = pd.Series(y_tr).value_counts().sort_index().to_dict()
-        after = pd.Series(y_res).value_counts().sort_index().to_dict()
-        print("\n=== 4.3 SMOTE class distribution (train slice) ===")
-        print(f"  before: {before}")
-        print(f"  after : {after}")
-
     # --- 4.4 train models (on the 90% slice) -------------------------------
     neg, pos = int((y_tr == 0).sum()), int((y_tr == 1).sum())
 
-    rf = RandomForestClassifier(
-        n_estimators=200, class_weight="balanced",
-        random_state=RANDOM_STATE, n_jobs=-1,
-    )
+    rf = build_rf()
     rf.fit(X_tr_p, y_tr)
 
-    xgb = XGBClassifier(
-        n_estimators=200, learning_rate=0.05, max_depth=6,
-        subsample=0.8, colsample_bytree=0.8, scale_pos_weight=neg / pos,
-        random_state=RANDOM_STATE, n_jobs=-1, eval_metric="logloss",
-        early_stopping_rounds=20,
-    )
+    xgb = build_xgb(scale_pos_weight=neg / pos, early_stopping=True)
     xgb.fit(X_tr_p, y_tr, eval_set=[(X_val_p, y_val)], verbose=False)
 
-    seq_idx, static_idx = _seq_static_indices(feature_names)
-    Xtr_seq, Xtr_static = _split_seq_static(X_res, seq_idx, static_idx)
-    Xval_seq, Xval_static = _split_seq_static(X_val_p, seq_idx, static_idx)
-    Xte_seq, Xte_static = _split_seq_static(X_test_p, seq_idx, static_idx)
-
-    from tensorflow.keras.callbacks import EarlyStopping
-    import tensorflow as tf
-    tf.random.set_seed(RANDOM_STATE)
-
-    lstm = build_lstm(n_static=len(static_idx))
-    es = EarlyStopping(patience=5, restore_best_weights=True, monitor="val_loss")
-    lstm.fit(
-        [Xtr_seq, Xtr_static], y_res,
-        epochs=50, batch_size=256, validation_split=0.1,
-        callbacks=[es], verbose=2 if verbose else 0,
+    lgbm = build_lgbm()
+    lgbm.fit(
+        X_tr_p, y_tr, eval_set=[(X_val_p, y_val)], eval_metric="binary_logloss",
+        callbacks=[lgb.early_stopping(20, verbose=False), lgb.log_evaluation(0)],
     )
 
     # --- Validation-slice probabilities → tune thresholds ------------------
     val_proba = {
         "RandomForest": rf.predict_proba(X_val_p)[:, 1],
         "XGBoost": xgb.predict_proba(X_val_p)[:, 1],
-        "LSTM": lstm.predict([Xval_seq, Xval_static], verbose=0).ravel(),
+        "LightGBM": lgbm.predict_proba(X_val_p)[:, 1],
     }
     thresholds = {name: tune_threshold(y_val, p) for name, p in val_proba.items()}
     joblib.dump(thresholds, MODELS_DIR / "thresholds.pkl")
@@ -331,35 +300,16 @@ def run(verbose: bool = True) -> pd.DataFrame:
     test_proba = {
         "RandomForest": rf.predict_proba(X_test_p)[:, 1],
         "XGBoost": xgb.predict_proba(X_test_p)[:, 1],
-        "LSTM": lstm.predict([Xte_seq, Xte_static], verbose=0).ravel(),
+        "LightGBM": lgbm.predict_proba(X_test_p)[:, 1],
     }
+    pd.DataFrame([_metrics(n, y_test, p) for n, p in test_proba.items()]).to_csv(
+        TABLES_DIR / "ml_model_comparison.csv", index=False)
 
-    # Default-threshold (0.5) comparison — kept for reference
-    comparison = pd.DataFrame([_metrics(n, y_test, p) for n, p in test_proba.items()])
-    comparison.to_csv(TABLES_DIR / "ml_model_comparison.csv", index=False)
-
-    # Final table: test metrics AT the validation-tuned threshold
-    final_rows: list[dict[str, object]] = []
-    for name, proba in test_proba.items():
-        m = _metrics(name, y_test, proba, threshold=thresholds[name])
-        final_rows.append({
-            "Model": name, "val_tuned_threshold": round(thresholds[name], 2),
-            "F1": m["F1"], "Precision": m["Precision"],
-            "Recall": m["Recall"], "ROC_AUC": m["ROC_AUC"],
-            "Accuracy": m["Accuracy"],
-        })
-    final_cmp = pd.DataFrame(final_rows)
+    final_cmp = _final_table(test_proba, y_test, thresholds)
     final_cmp.to_csv(TABLES_DIR / "ml_model_comparison_final.csv", index=False)
 
-    plot_importance(rf, feature_names, "Random Forest — Top 20 Feature Importances",
-                    FIGURES_DIR / "ml_feature_importance_rf.png")
-    plot_importance(xgb, feature_names, "XGBoost — Top 20 Feature Importances",
-                    FIGURES_DIR / "ml_feature_importance_xgboost.png")
-
-    # --- 4.6 save models ---------------------------------------------------
-    joblib.dump(rf, MODELS_DIR / "rf_model.pkl")
-    joblib.dump(xgb, MODELS_DIR / "xgboost_model.pkl")
-    lstm.save(MODELS_DIR / "lstm_model.keras")
+    _save_importances(rf, xgb, lgbm, feature_names)
+    _save_models(rf, xgb, lgbm)
 
     if verbose:
         print("\n=== 4.5 Final comparison (test set @ validation-tuned threshold) ===")
@@ -367,8 +317,6 @@ def run(verbose: bool = True) -> pd.DataFrame:
         primary = final_cmp.loc[final_cmp["Recall"].idxmax(), "Model"]
         print(f"\nPrimary model (highest recall at val-tuned threshold): {primary}")
         print(f"Thresholds: {thresholds}")
-        print(f"Saved models to {MODELS_DIR}/, final table to "
-              f"{TABLES_DIR}/ml_model_comparison_final.csv")
 
     return final_cmp
 
@@ -378,9 +326,9 @@ def refit_full_train(verbose: bool = True) -> pd.DataFrame:
 
     Thresholds were fixed on the held-out validation slice by `run()`; now that
     they are frozen (models/thresholds.json), the models are refit on the full
-    train set so they use all available data. XGBoost reuses the tree count from
-    the early-stopping run (no further early stopping). Saved models, preprocessor,
-    importance plots, and ml_model_comparison_final.csv are overwritten.
+    train set. XGBoost and LightGBM reuse the tree counts from their early-stop
+    runs (no further early stopping). Saved models, preprocessor, importance
+    plots, and ml_model_comparison_final.csv are overwritten.
 
     Returns:
         Final comparison DataFrame (test metrics at the frozen thresholds).
@@ -392,9 +340,9 @@ def refit_full_train(verbose: bool = True) -> pd.DataFrame:
     X_test, y_test = test_df[feature_cols], test_df[TARGET].to_numpy()
 
     thresholds = json.loads((MODELS_DIR / "thresholds.json").read_text())
-    xgb_n_estimators = int(joblib.load(MODELS_DIR / "xgboost_model.pkl").best_iteration) + 1
+    xgb_n = int(joblib.load(MODELS_DIR / "xgboost_model.pkl").best_iteration) + 1
+    lgbm_n = int(joblib.load(MODELS_DIR / "lightgbm_model.pkl").best_iteration_)
 
-    # Preprocessor refit on FULL train
     pre = build_preprocessor(numeric, categorical)
     X_train_p = pre.fit_transform(X_train)
     X_test_p = pre.transform(X_test)
@@ -403,71 +351,30 @@ def refit_full_train(verbose: bool = True) -> pd.DataFrame:
 
     neg, pos = int((y_train == 0).sum()), int((y_train == 1).sum())
 
-    rf = RandomForestClassifier(
-        n_estimators=200, class_weight="balanced",
-        random_state=RANDOM_STATE, n_jobs=-1,
-    )
+    rf = build_rf()
     rf.fit(X_train_p, y_train)
 
-    # No early stopping on the refit — tree count fixed from the val run
-    xgb = XGBClassifier(
-        n_estimators=xgb_n_estimators, learning_rate=0.05, max_depth=6,
-        subsample=0.8, colsample_bytree=0.8, scale_pos_weight=neg / pos,
-        random_state=RANDOM_STATE, n_jobs=-1, eval_metric="logloss",
-    )
+    xgb = build_xgb(scale_pos_weight=neg / pos, n_estimators=xgb_n, early_stopping=False)
     xgb.fit(X_train_p, y_train)
 
-    # SMOTE on full train for the LSTM
-    X_res, y_res = SMOTE(random_state=RANDOM_STATE).fit_resample(X_train_p, y_train)
-    perm = np.random.permutation(len(y_res))
-    X_res, y_res = X_res[perm], y_res[perm]
-
-    seq_idx, static_idx = _seq_static_indices(feature_names)
-    Xtr_seq, Xtr_static = _split_seq_static(X_res, seq_idx, static_idx)
-    Xte_seq, Xte_static = _split_seq_static(X_test_p, seq_idx, static_idx)
-
-    from tensorflow.keras.callbacks import EarlyStopping
-    import tensorflow as tf
-    tf.random.set_seed(RANDOM_STATE)
-
-    lstm = build_lstm(n_static=len(static_idx))
-    es = EarlyStopping(patience=5, restore_best_weights=True, monitor="val_loss")
-    lstm.fit(
-        [Xtr_seq, Xtr_static], y_res,
-        epochs=50, batch_size=256, validation_split=0.1,
-        callbacks=[es], verbose=2 if verbose else 0,
-    )
+    lgbm = build_lgbm(n_estimators=lgbm_n)
+    lgbm.fit(X_train_p, y_train)
 
     test_proba = {
         "RandomForest": rf.predict_proba(X_test_p)[:, 1],
         "XGBoost": xgb.predict_proba(X_test_p)[:, 1],
-        "LSTM": lstm.predict([Xte_seq, Xte_static], verbose=0).ravel(),
+        "LightGBM": lgbm.predict_proba(X_test_p)[:, 1],
     }
-    final_rows: list[dict[str, object]] = []
-    for name, proba in test_proba.items():
-        m = _metrics(name, y_test, proba, threshold=thresholds[name])
-        final_rows.append({
-            "Model": name, "val_tuned_threshold": round(thresholds[name], 2),
-            "F1": m["F1"], "Precision": m["Precision"],
-            "Recall": m["Recall"], "ROC_AUC": m["ROC_AUC"],
-            "Accuracy": m["Accuracy"],
-        })
-    final_cmp = pd.DataFrame(final_rows)
+    final_cmp = _final_table(test_proba, y_test, thresholds)
     final_cmp.to_csv(TABLES_DIR / "ml_model_comparison_final.csv", index=False)
 
-    plot_importance(rf, feature_names, "Random Forest — Top 20 Feature Importances",
-                    FIGURES_DIR / "ml_feature_importance_rf.png")
-    plot_importance(xgb, feature_names, "XGBoost — Top 20 Feature Importances",
-                    FIGURES_DIR / "ml_feature_importance_xgboost.png")
-
-    joblib.dump(rf, MODELS_DIR / "rf_model.pkl")
-    joblib.dump(xgb, MODELS_DIR / "xgboost_model.pkl")
-    lstm.save(MODELS_DIR / "lstm_model.keras")
+    _save_importances(rf, xgb, lgbm, feature_names)
+    _save_models(rf, xgb, lgbm)
 
     if verbose:
         print(f"\n=== Refit on full train ({len(train_df):,} rows) "
               f"@ frozen val-tuned thresholds ===")
-        print(f"XGBoost n_estimators (from early-stop run): {xgb_n_estimators}")
+        print(f"Tree counts from early-stop runs — XGB: {xgb_n}, LightGBM: {lgbm_n}")
         print(final_cmp.to_string(index=False))
         print(f"Saved refit models to {MODELS_DIR}/ (preprocessor refit on full train)")
 
@@ -475,4 +382,5 @@ def refit_full_train(verbose: bool = True) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
+    run()
     refit_full_train()

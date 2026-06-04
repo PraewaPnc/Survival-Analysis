@@ -17,7 +17,7 @@ training_dataset.csv (40,320 × 57)
    │  8.3 data-quality audit + time-based split
    ▼
 train.csv (32,052) / test.csv (8,268)
-   │  8.4 train RF / XGBoost / LSTM, tune thresholds, refit on 100%
+   │  8.4 train RF / XGBoost / LightGBM, tune thresholds, refit on 100%
    ▼
 models/  +  ml_model_comparison_final.csv
    │  8.5 blend RF prob + RUL → risk score; single-span inference
@@ -31,7 +31,7 @@ combined_risk_scores.csv, test_predictions.csv, predict_risk()
 |---|---|
 | `weather_features.py` | 8.1 forecast aggregation + 8.2 probabilistic label generation |
 | `data_quality.py` | 8.3 pre-training audit (leakage, imbalance, distributions, split) |
-| `ml_models.py` | 8.4 train/eval/threshold-tune (`run`) + production refit (`refit_full_train`) |
+| `ml_models.py` | 8.4 train/eval/threshold-tune (`run`) + production refit (`refit_full_train`) — RF/XGB/LightGBM |
 | `ml_risk_model.py` | 8.5 combined risk (`build_combined_risk_scores`), inference (`predict_risk`), test predictions (`build_test_predictions`) |
 
 ---
@@ -85,19 +85,22 @@ label = Bernoulli(p), RandomState(42)
 `forecast_date` (split key), `installation_date`/`age_at_forecast_days` (absorbed by
 `age_at_forecast_years`). `region` added to one-hot (spec omitted it). → 71 processed columns.
 
-**Imbalance strategy (per model, to avoid double-correction):**
+Three tree ensembles — all have built-in class weighting, so **no SMOTE** (resampling + weighting would
+double-correct):
 - RF — `class_weight="balanced"`
-- XGBoost — `scale_pos_weight = neg/pos ≈ 5.2`
-- LSTM — SMOTE-resampled train (no built-in weighting); 5 weather features as a (5,1)
-  pseudo-sequence → LSTM(64) ‖ Dense(32) static → Dense(32) → sigmoid.
+- XGBoost — `scale_pos_weight = neg/pos ≈ 5.2` (early-stops 20 rounds on val)
+- LightGBM — `class_weight="balanced"`, `num_leaves=31` (early-stops 20 rounds on val)
+
+(LSTM was originally the 3rd model but **replaced by LightGBM**: the aggregated 5-feature "pseudo-sequence"
+carried no temporal signal and trailed all tree models — a tabular dataset is better served by a 3rd tree.)
 
 **Clean train/val/test protocol:**
 1. `run()` — carve a stratified 10% validation slice from train; fit preprocessor + models on
    the 90%; tune F1-optimal thresholds on the val slice (`np.arange(0.1,0.6,0.01)`), **never on test**.
 2. `refit_full_train()` — freeze thresholds, refit preprocessor + all models on the full
-   32,052-row train (XGB reuses 200 trees). This is the deployed artifact set.
+   32,052-row train (XGB & LightGBM reuse their 200 early-stop trees). This is the deployed artifact set.
 
-**Frozen thresholds:** RF 0.11, XGB 0.50, LSTM 0.14 (`models/thresholds.json`).
+**Frozen thresholds:** RF 0.11, XGB 0.50, LightGBM 0.55 (`models/thresholds.json`).
 
 **Final metrics — post-refit on test:**
 
@@ -105,10 +108,10 @@ label = Bernoulli(p), RandomState(42)
 |---|---|---|---|---|---|
 | **RandomForest (primary)** | 0.11 | 0.319 | 0.197 | **0.824** | 0.674 |
 | XGBoost | 0.50 | 0.355 | 0.258 | 0.571 | 0.676 |
-| LSTM | 0.14 | 0.295 | 0.189 | 0.677 | 0.591 |
+| **LightGBM** | 0.55 | **0.359** | 0.278 | 0.505 | **0.680** |
 
 **Primary = RandomForest** — recall is the priority metric (a missed failure costs more than a
-false alarm); RF catches 82% of failures. ROC-AUCs are modest (0.59–0.68) because the label is a
+false alarm); RF catches 82% of failures. LightGBM is best by F1/ROC-AUC. ROC-AUCs are modest (~0.67–0.68) because the label is a
 noisy Bernoulli draw (strongest single predictor r≈0.23). XGBoost is weather-dominated
 (`forecast_wind_max` = 0.148 importance, 3× the next).
 
@@ -137,7 +140,7 @@ risk_level: ≥0.7 Critical / ≥0.5 High / ≥0.3 Medium / else Low
   per-model probs, recommended threshold (RF 0.11), combined_risk_score, risk_level. If `rul_days` is
   None → score = RF failure prob alone.
 
-- `build_test_predictions(force=False)` — per-row test predictions: `prob_{rf,xgboost,lstm}` +
+- `build_test_predictions(force=False)` — per-row test predictions: `prob_{rf,xgboost,lightgbm}` +
   `pred_{...}` at frozen thresholds + `actual`. Skips if file exists. → `test_predictions.csv`.
 
 > Note: `failure_prob` (combined_risk_scores) and `prob_rf` (test_predictions) are the same value —
@@ -158,7 +161,7 @@ risk_level: ≥0.7 Critical / ≥0.5 High / ≥0.3 Medium / else Low
 
 ## Environment notes
 
-- New deps installed this session: `xgboost 3.2`, `imbalanced-learn`, `tensorflow 2.21`, `joblib`.
+- ML deps: `xgboost 3.2`, `lightgbm 4.6`, `joblib` (all tree ensembles; SMOTE/TensorFlow no longer used).
 - macOS/Apple-Silicon: xgboost needs OpenMP. Homebrew's libomp was unavailable, so sklearn's bundled
   `libomp.dylib` was placed at `/opt/homebrew/opt/libomp/lib/libomp.dylib` (xgboost's hardcoded rpath).
 
@@ -177,7 +180,7 @@ python3 -c "from src.ml_risk_model import plot_roc_pr_curves; plot_roc_pr_curves
 
 ## Artifacts
 
-- **Models:** `models/{rf_model,xgboost_model}.pkl`, `models/lstm_model.keras`,
+- **Models:** `models/{rf_model,xgboost_model,lightgbm_model}.pkl`,
   `models/preprocessor.pkl`, `models/thresholds.{json,pkl}`
 - **Tables (`outputs/tables/`):**
   - `ml_model_comparison.csv` — default-0.5 test metrics
@@ -188,7 +191,7 @@ python3 -c "from src.ml_risk_model import plot_roc_pr_curves; plot_roc_pr_curves
   - `priority_maintenance_list_forecast.csv` — risk scores + weather context, ranked by risk_score desc
   - `data_quality_report.md` — Phase 8.3 audit
 - **Figures (`outputs/figures/`):**
-  - `ml_feature_importance_rf.png`, `ml_feature_importance_xgboost.png`
+  - `ml_feature_importance_{rf,xgboost,lightgbm}.png`
   - `ml_roc_pr_curves.png` — ROC + Precision-Recall for all 3 models (operating thresholds marked)
 - **Data (`data/`):** `weather_aggregated.csv`, `training_dataset.csv`, `train.csv`, `test.csv`
 
@@ -198,7 +201,7 @@ python3 -c "from src.ml_risk_model import plot_roc_pr_curves; plot_roc_pr_curves
 |---|---|---|---|---|---|---|---|
 | **RandomForest (primary)** | 0.11 | 0.319 | 0.197 | **0.824** | 0.674 | 0.438 | 0.290 |
 | XGBoost | 0.50 | 0.355 | 0.258 | 0.571 | 0.676 | 0.670 | 0.296 |
-| LSTM | 0.14 | 0.295 | 0.189 | 0.677 | 0.591 | 0.485 | 0.214 |
+| **LightGBM** | 0.55 | **0.359** | 0.278 | 0.505 | **0.680** | 0.712 | **0.299** |
 
 PR baseline (positive rate) = 0.159. RF's low accuracy is by design — its 0.11 threshold maximises recall
 (flags ~66% of units), the right trade-off when a missed failure costs more than a false alarm.
